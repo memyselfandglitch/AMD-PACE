@@ -73,6 +73,10 @@ curl -X POST "http://localhost:8000/config_server" \
 **Purpose**: Execute prefill batches or decode steps
 
 ##### Prefill Batch Request
+
+The `prompt` field must be a **pre-tokenized list of integer token IDs**
+(e.g. from `tokenizer.encode()`), not a raw string.
+
 ```bash
 curl -X POST "http://localhost:8000/step" \
   -H "Content-Type: application/json" \
@@ -80,7 +84,7 @@ curl -X POST "http://localhost:8000/step" \
     "prefill_batch": [
       {
         "is_prefill": true,
-        "prompt": "Once upon a time in a distant land",
+        "prompt": [4014, 2581, 263, 931, 297, 263, 29592, 2982],
         "req_id": "12345678-1234-5678-9abc-123456789abc",
         "generation_config": {
           "max_new_tokens": 50,
@@ -98,12 +102,49 @@ curl -X POST "http://localhost:8000/step" \
   }' | jq
 ```
 
+**Prefill Response**:
+```json
+{
+  "status": "success",
+  "step_type": "prefill_batch",
+  "results": [
+    {
+      "req_id": "12345678-1234-5678-9abc-123456789abc",
+      "result": {
+        "12345678-1234-5678-9abc-123456789abc": {
+          "token_ids": [29892],
+          "status": "PREFILL_COMPLETED",
+          "num_tokens_generated": 1
+        }
+      }
+    }
+  ]
+}
+```
+
 ##### Decode Request
 ```bash
 curl -X POST "http://localhost:8000/step" \
   -H "Content-Type: application/json" \
   -d '{"is_decode": true}'  | jq
 ```
+
+**Decode Response**:
+```json
+{
+  "status": "success",
+  "step_type": "decode",
+  "result": {
+    "12345678-1234-5678-9abc-123456789abc": {
+      "token_ids": [727],
+      "status": "DECODING_IN_PROGRESS",
+      "num_tokens_generated": 1
+    }
+  }
+}
+```
+
+When a sequence finishes, `status` becomes `"COMPLETED"` and includes a `stop_reason` (`"stop"` or `"length"`).
 
 ### 3. Inspection, Testing and Debugging
 
@@ -165,15 +206,15 @@ curl -X POST "http://localhost:8000/config_server" \
 # 3. Test tokenizer
 curl -X GET "http://localhost:8000/tokenizer_status"
 
-# 4. Submit prefill request
+# 4. Submit prefill request (prompt must be pre-tokenized token IDs)
 curl -X POST "http://localhost:8000/step" \
   -H "Content-Type: application/json" \
   -d '{
     "prefill_batch": [
       {
         "is_prefill": true,
-        "prompt": "The future of AI is",
-        "req_id": "test-001",
+        "prompt": [450, 5434, 310, 319, 29902, 338],
+        "req_id": "a0000000-0000-0000-0000-000000000001",
         "generation_config": {
           "max_new_tokens": 30,
           "temperature": 0.7,
@@ -208,8 +249,8 @@ curl -X POST "http://localhost:8000/step" \
     "prefill_batch": [
       {
         "is_prefill": true,
-        "prompt": "Write a poem about the ocean",
-        "req_id": "creative-001",
+        "prompt": [6113, 263, 26576, 1048, 278, 23474],
+        "req_id": "a0000000-0000-0000-0000-000000000002",
         "generation_config": {
           "max_new_tokens": 50,
           "temperature": 1.2,
@@ -229,8 +270,8 @@ curl -X POST "http://localhost:8000/step" \
     "prefill_batch": [
       {
         "is_prefill": true,
-        "prompt": "Explain machine learning in simple terms",
-        "req_id": "technical-001",
+        "prompt": [5765, 7420, 5765, 6509, 29257, 297, 2560, 4958],
+        "req_id": "a0000000-0000-0000-0000-000000000003",
         "generation_config": {
           "max_new_tokens": 100,
           "temperature": 0.3,
@@ -250,20 +291,20 @@ curl -X POST "http://localhost:8000/step" \
     "prefill_batch": [
       {
         "is_prefill": true,
-        "prompt": "Story 1: Once upon a time",
-        "req_id": "story-1",
+        "prompt": [5765, 29896, 29901, 9038, 2501, 263, 931],
+        "req_id": "a0000000-0000-0000-0000-000000000004",
         "generation_config": {"max_new_tokens": 25}
       },
       {
         "is_prefill": true,
-        "prompt": "Story 2: In a galaxy far away",
-        "req_id": "story-2",
+        "prompt": [5765, 29906, 29901, 512, 263, 17471, 2215, 3448],
+        "req_id": "a0000000-0000-0000-0000-000000000005",
         "generation_config": {"max_new_tokens": 25}
       },
       {
         "is_prefill": true,
-        "prompt": "Story 3: The year is 2050",
-        "req_id": "story-3",
+        "prompt": [5765, 29941, 29901, 450, 1629, 338, 29871, 29906, 29900, 29945, 29900],
+        "req_id": "a0000000-0000-0000-0000-000000000006",
         "generation_config": {"max_new_tokens": 25}
       }
     ]

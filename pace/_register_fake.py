@@ -134,6 +134,17 @@ def _fake_libxsmm_fused_mlp(
     return torch.empty(out_shape, dtype=src.dtype, device=src.device)
 
 
+# Note: ops registered with the `m.def(schema, fn)` form are
+# CompositeImplicitAutograd and automatically handle meta /
+# FakeTensorMode by running the impl. No `register_fake` needed --
+# adding one would raise because CompositeImplicitAutograd ops
+# decompose rather than dispatch. This applies to:
+#   - pace::slab_autotune_block_size (csrc/ops/slab_attention.cpp)
+#   - pace::thread_bind, pace::log, pace::enable_fusion (csrc/core/core_ops.cpp)
+# The three core helpers are also side-effecting void ops with no tensor
+# arguments, so there is nothing for a fake to compute anyway.
+
+
 @register_fake("pace::pace_addmm")
 def _fake_pace_addmm(bias: torch.Tensor, input: torch.Tensor, weight: torch.Tensor):
     # pace_addmm performs: bias + input @ weight

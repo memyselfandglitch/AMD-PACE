@@ -43,7 +43,7 @@ class LLMModel(object):
     Examples:
         >>> model_name = "meta-llama/Llama-3.1-8B"
         >>> prompt = "Once upon a time"
-        >>> prompt_encoded = tokenizer.batch_encode_plus([prompt], return_tensors="pt")
+        >>> prompt_encoded = tokenizer([prompt], return_tensors="pt")
         >>> from pace.llm import LLMModel, SamplingConfig
         >>> model = LLMModel(model_name)
         >>> sampling_config = SamplingConfig(max_length=50, do_sample=True, temperature=0.7)

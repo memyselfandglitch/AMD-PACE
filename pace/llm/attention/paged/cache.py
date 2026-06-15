@@ -94,23 +94,6 @@ def compute_slot_mapping(
     return torch.cat(all_slots)
 
 
-def compute_single_slot(layer_cache: "PagedKVCache", pos: int) -> int:
-    """Compute the physical slot for a single token position.
-
-    Fast path for decode where only one new token is written per request.
-    Callers must ensure blocks are already allocated for ``pos``.
-
-    Returns:
-        Physical slot index, or -1 if ``pos`` exceeds allocated blocks.
-    """
-    block_idx = pos // layer_cache.block_size
-    block_offset = pos % layer_cache.block_size
-    if block_idx < len(layer_cache.allocated_blocks):
-        physical_block = layer_cache.allocated_blocks[block_idx]
-        return physical_block * layer_cache.block_size + block_offset
-    return -1
-
-
 class PagedKVCache(KVCacheBase):
     """
     Paged key-value cache implementation for efficient memory management.
@@ -715,10 +698,7 @@ class PagedCache(Cache):
                 standard decode; set > 1 for speculative-decode target
                 forwards where each request contributes multiple query tokens.
         """
-        from pace.llm.attention.paged.ops import (
-            PagedAttentionMetadata,
-            get_paged_attention_scheduler_metadata,
-        )
+        from pace.llm.attention.paged.ops import PagedAttentionMetadata
 
         num_reqs = len(contexts)
         isa = PagedCache._isa_cache
@@ -735,6 +715,7 @@ class PagedCache(Cache):
         max_seq_len = 0
         kv_managers = []
 
+        block_size = self._block_size
         for i, ctx in enumerate(contexts):
             mgr = ctx.kv_cache_manager if hasattr(ctx, "kv_cache_manager") else ctx
             kv_managers.append(mgr)
@@ -746,22 +727,34 @@ class PagedCache(Cache):
             if total_seq_len > max_seq_len:
                 max_seq_len = total_seq_len
 
-            layer_cache._ensure_blocks_allocated(total_seq_len)
+            # Cache allocated_blocks in a local variable to avoid repeated
+            # property dispatch + dict lookup via pool.get_blocks_for_request.
+            blocks = layer_cache.allocated_blocks
+            need_blocks = (total_seq_len + block_size - 1) // block_size
+            if need_blocks > len(blocks):
+                layer_cache._ensure_blocks_allocated(total_seq_len)
+                blocks = layer_cache.allocated_blocks
 
-            # compute_slot_mapping cannot be used here because each request
-            # has its own SharedPagedKVCache with independent block allocations
-            # and different past lengths — unlike the offline batch path where
-            # all sequences share a single PagedKVCache.
             if is_decode:
-                slot_mapping[i] = compute_single_slot(layer_cache, past_len)
+                block_idx = past_len // block_size
+                block_offset = past_len % block_size
+                if block_idx < len(blocks):
+                    slot_mapping[i] = blocks[block_idx] * block_size + block_offset
+                else:
+                    slot_mapping[i] = -1
             else:
                 for t in range(query_len):
                     pos = past_len + t
-                    slot_mapping[i * query_len + t] = compute_single_slot(
-                        layer_cache, pos
-                    )
+                    block_idx = pos // block_size
+                    block_offset = pos % block_size
+                    if block_idx < len(blocks):
+                        slot_mapping[i * query_len + t] = (
+                            blocks[block_idx] * block_size + block_offset
+                        )
+                    else:
+                        slot_mapping[i * query_len + t] = -1
 
-            num_blocks = len(layer_cache.allocated_blocks)
+            num_blocks = len(blocks)
             if num_blocks > max_blocks_per_seq:
                 max_blocks_per_seq = num_blocks
 
@@ -791,20 +784,9 @@ class PagedCache(Cache):
             )
         query_start_loc = PagedCache._query_start_loc_cache[cache_key]
 
-        scheduler_metadata = get_paged_attention_scheduler_metadata(
-            num_reqs=num_reqs,
-            num_heads=self._num_heads,
-            num_kv_heads=self._num_kv_heads,
-            head_dim=self._head_dim,
-            seq_lens=seq_lens,
-            dtype=self._dtype,
-            query_start_loc=query_start_loc,
-            causal=True,
-            sliding_window_size=-1,
-            isa=isa,
-            enable_kv_split=True,
-        )
-
+        # scheduler_metadata is intentionally left as None here.
+        # PagedAttentionBackend.forward() builds it per-layer with the
+        # correct sliding_window_size, matching the vLLM approach.
         meta = PagedAttentionMetadata(
             isa=isa,
             num_actual_tokens=num_reqs * query_len,
@@ -814,12 +796,13 @@ class PagedCache(Cache):
             seq_lens=seq_lens,
             block_table=block_table.contiguous(),
             slot_mapping=slot_mapping,
-            scheduler_metadata=scheduler_metadata,
             causal=True,
         )
 
+        # Convert seq_lens to a Python list once to avoid per-element .item() calls
+        seq_lens_list = seq_lens.tolist()
         for i, mgr in enumerate(kv_managers):
-            new_seq_len = int(seq_lens[i].item())
+            new_seq_len = int(seq_lens_list[i])
             for co in mgr.cache_objects:
                 co.seq_len = new_seq_len
 

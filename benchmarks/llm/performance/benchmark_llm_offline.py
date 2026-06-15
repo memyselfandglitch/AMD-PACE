@@ -225,6 +225,17 @@ class VLLMOfflineFramework(BenchmarkOfflineFramework):
 
         from vllm import LLM, SamplingParams
 
+        speculative_config = None
+        if model_args.spec_config is not None:
+            speculative_config = {
+                "model": model_args.spec_config["model_name"],
+                "num_speculative_tokens": model_args.spec_config[
+                    "num_speculated_tokens"
+                ],
+                "method": "draft_model",
+                "parallel_drafting": True,
+            }
+
         # Init model
         self.model = LLM(
             model_args.model_name,
@@ -233,6 +244,7 @@ class VLLMOfflineFramework(BenchmarkOfflineFramework):
                 generation_args.manual_seed if generation_args.manual_seed else 1
             ),  # New vLLM (V1) sets default seed to 1 but cannot pass None
             enable_prefix_caching=False,
+            speculative_config=speculative_config,
         )
 
         gen_kwargs = {

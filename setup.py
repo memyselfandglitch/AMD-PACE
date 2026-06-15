@@ -6,20 +6,35 @@
 
 import os
 import glob
-import sysconfig
+import shutil
 from pathlib import Path
 from setuptools import setup
+from setuptools.dist import Distribution
 from distutils.command.install import install
 from distutils.command.clean import clean
 from setuptools.command.build_py import build_py
 from setuptools.command.build_clib import build_clib
 
+# setuptools >= 70 ships bdist_wheel under setuptools.command; older releases
+# only expose it via the standalone `wheel` package. Support both.
+try:
+    from setuptools.command.bdist_wheel import bdist_wheel as _bdist_wheel
+except ImportError:
+    from wheel.bdist_wheel import bdist_wheel as _bdist_wheel
+
 try:
     import torch
-    from torch.utils import cpp_extension
-    from torch.utils.cpp_extension import BuildExtension, CppExtension
 except ModuleNotFoundError:
     raise RuntimeError("PyTorch not found, please install PyTorch to continue.")
+
+
+def _check_build_tools() -> None:
+    if shutil.which("cmake") is None:
+        raise RuntimeError(
+            "pace: required build tool not found on PATH: cmake. "
+            "Install via pip install -r build_requirements.txt"
+        )
+
 
 try:
     from setuptools_scm import get_version
@@ -45,9 +60,6 @@ def extract_cmake_compatible_version(version_string):
 
 PACKAGE_CMAKE_VERSION = extract_cmake_compatible_version(PACKAGE_VERSION)
 
-PYTORCH_VERSION = torch.__version__
-PYTORCH_DIR = os.path.dirname(os.path.abspath(torch.__file__))
-
 BUILD_TYPE = "Release"
 
 PACKAGE_NAME = "pace"
@@ -61,6 +73,7 @@ PACKAGE_INSALL_DIR = os.path.join(PACKAGE_BUILD_TYPE_DIR, PACKAGE_NAME)
 
 class CPPLibBuild(build_clib):
     def run(self):
+        _check_build_tools()
         print(torch.__config__.show())
         print("*" * 45 + "\nBuilding CPP library\n" + "*" * 45)
         print(f"PACE Version: {PACKAGE_VERSION}")
@@ -75,7 +88,6 @@ class CPPLibBuild(build_clib):
         cmake_cmd += f" -DPACKAGE_NAME={CPP_PACKAGE_NAME}"
         cmake_cmd += f" -DPACKAGE_VERSION={PACKAGE_CMAKE_VERSION}"
         cmake_cmd += f" -DCMAKE_PREFIX_PATH={torch.utils.cmake_prefix_path}"
-        cmake_cmd += f" -DPYTHON_INCLUDE_DIR={sysconfig.get_paths()['include']}"
         cmake_cmd += f" -DCMAKE_INSTALL_PREFIX={PACKAGE_INSALL_DIR}"
         if os.system(cmake_cmd):
             raise RuntimeError("Build failed, please check the trace.")
@@ -88,38 +100,6 @@ class CPPLibBuild(build_clib):
         make_install_cmd = f"make -C {PACKAGE_BUILD_DIR} install"
         if os.system(make_install_cmd):
             raise RuntimeError("Build failed, please check the trace.")
-
-
-def create_extension():
-    print("*" * 45 + "\nBuilding Python Extension package\n" + "*" * 45)
-    cpp_files = [os.path.join(PACKAGE_DIR, "csrc/init.cpp")]
-    include_dirs = cpp_extension.include_paths() + [
-        os.path.join(PACKAGE_CSRC),
-    ]
-    library_dirs = [
-        os.path.join(PACKAGE_INSALL_DIR, "lib"),
-        os.path.join(PYTORCH_DIR, "lib"),
-    ]
-    libraries = [CPP_PACKAGE_NAME]
-    compile_args = [
-        # "-Wall",
-        # "-Wextra",
-        # "-Wno-attributes",
-        # "-Wno-ignored-attributes",
-        # "-Wno-write-strings",
-        # "-Wreturn-type",
-    ]
-
-    return CppExtension(
-        name="{}._C".format(PACKAGE_NAME),
-        language="c++",
-        sources=cpp_files,
-        include_dirs=include_dirs,
-        library_dirs=library_dirs,
-        libraries=libraries,
-        extra_compile_args=compile_args,
-        extra_link_args=["-Wl,-rpath,$ORIGIN/lib"],
-    )
 
 
 cmdclass = {"build_clib": CPPLibBuild}
@@ -162,41 +142,50 @@ class CleanCmd(clean, object):
 
 class PythonPackageBuild(build_py, object):
     def run(self) -> None:
+        # Ensure the CMake build has run so libpace_cpp.so exists before we
+        # walk the source tree (build_clib used to be chained via build_ext).
+        self.run_command("build_clib")
         ret = get_src_py_and_dst()
         for src, dst in ret:
             self.copy_file(src, dst)
         super(PythonPackageBuild, self).finalize_options()
 
 
-class ExtBuild(BuildExtension):
-    def run(self):
-        self.run_command("build_clib")
+# Force a platform-tagged wheel even though setuptools sees no ext_modules.
+# Without this the wheel would be tagged `any` (pure-Python) and would not
+# carry libpace_cpp.so's manylinux/linux platform constraint.
+class BinaryDistribution(Distribution):
+    def has_ext_modules(self):
+        return True
 
-        self.build_lib = os.path.relpath(PACKAGE_BUILD_TYPE_DIR)
-        self.build_temp = os.path.relpath(PACKAGE_BUILD_DIR)
-        self.library_dirs.append(os.path.join(PACKAGE_BUILD_TYPE_DIR, "lib"))
-        super(ExtBuild, self).run()
+
+# Override the wheel tag to `py3-none-<plat>`: the wheel ships no CPython
+# extension (libpace_cpp.so links only torch_cpu+c10, no Python C API), so
+# it is CPython-version-agnostic. The minimum Python version is enforced
+# by `requires-python` in pyproject.toml, not by the wheel tag.
+class BdistWheel(_bdist_wheel):
+    def finalize_options(self):
+        super().finalize_options()
+        self.root_is_pure = False
+
+    def get_tag(self):
+        _, _, plat = super().get_tag()
+        return ("py3", "none", plat)
 
 
 cmdclass["install"] = InstallCmd
 cmdclass["build_py"] = PythonPackageBuild
-cmdclass["build_ext"] = ExtBuild
+cmdclass["bdist_wheel"] = BdistWheel
 cmdclass["clean"] = CleanCmd
 
 
-data_files_list = [
-    (
-        f"{PACKAGE_NAME}/lib",
-        [os.path.join(PACKAGE_INSALL_DIR, "lib/libpace_cpp.so")],
-    ),
-]
-
 setup(
-    name=PACKAGE_NAME,
-    data_files=data_files_list,
+    # `name` is omitted here; pyproject.toml's [project] name = "amd-pace" is
+    # authoritative for the distribution name. PACKAGE_NAME stays "pace" for
+    # the Python import path / package_data globs.
     packages=[PACKAGE_NAME],
-    package_data={PACKAGE_NAME: ["*.so", "lib/*.so", "bin/*.dll", "lib/*.lib"]},
+    package_data={PACKAGE_NAME: ["lib/*.so"]},
     zip_safe=False,
-    ext_modules=[create_extension()],
+    distclass=BinaryDistribution,
     cmdclass=cmdclass,
 )

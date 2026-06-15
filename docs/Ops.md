@@ -145,7 +145,7 @@ These ops apply Rotary Position Embeddings (RoPE) to query and key tensors. The 
     * `sin`: Sine tensor of shape `[BS, seq_len, head_dim // 2]`.
     * `unsqueeze_dim`: 1 for BNSH layout, 2 for BSNH layout (int).
 * Returns: Tuple of `(query_out, key_out)` with RoPE applied.
-* File: `csrc/ops/rope.cpp`, `csrc/ops/kernels/fused_rope.h`
+* File: `csrc/ops/rope.cpp`, `csrc/ops/kernels/fused_rope_avx512.cpp`
 * Correctness Verified: Yes
 * Note: `head_dim` must be even. The Python `RotaryEmbedding.apply_rotary_emb` method automatically dispatches to this fused kernel when inputs are contiguous BF16 neox-style.
 

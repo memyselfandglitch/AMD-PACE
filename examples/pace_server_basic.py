@@ -37,18 +37,18 @@ async def call_api_router(
         "model": model_name,
         "prompt": prompt,
         "stream": False,
-        "gen_config": {
-            "max_new_tokens": gen_kwargs.get("max_new_tokens", 50),
-            "temperature": gen_kwargs.get("temperature", 0.7),
-            "top_p": gen_kwargs.get("top_p", 1.0),
-            "top_k": gen_kwargs.get("top_k", 50),
-            "seed": gen_kwargs.get("seed", None),
-            "do_sample": gen_kwargs.get("do_sample", True),
-            "repetition_penalty": gen_kwargs.get("repetition_penalty", 1.0),
-            "frequency_penalty": gen_kwargs.get("frequency_penalty", 0.0),
-            "stop": gen_kwargs.get("stop_strings", "\n\n"),
-        },
+        "max_tokens": gen_kwargs.get("max_new_tokens", 50),
+        "temperature": gen_kwargs.get("temperature", 0.7),
+        "top_p": gen_kwargs.get("top_p", 1.0),
+        "top_k": gen_kwargs.get("top_k", 50),
+        "seed": gen_kwargs.get("seed", None),
+        "frequency_penalty": gen_kwargs.get("frequency_penalty", 0.0),
+        "stop": gen_kwargs.get("stop_strings", "\n\n"),
     }
+    if "do_sample" in gen_kwargs:
+        payload["do_sample"] = gen_kwargs["do_sample"]
+    if "repetition_penalty" in gen_kwargs:
+        payload["repetition_penalty"] = gen_kwargs["repetition_penalty"]
 
     headers = {"Content-Type": "application/json"}
 
@@ -67,7 +67,7 @@ async def call_api_router(
             response.raise_for_status()
             result = response.json()
             if "choices" in result and len(result["choices"]) > 0:
-                output = result["choices"][0]["message"]["content"]
+                output = result["choices"][0]["text"]
                 print(
                     f"{RESPONSE_COLOR}[{request_num}/{total_requests}] Received: {output}{RESET_COLOR}"
                 )
@@ -186,7 +186,7 @@ async def run_pace_llm(args):
                     "model": model_name,
                     "prompt": "probe",
                     "stream": False,
-                    "gen_config": {"max_new_tokens": 1},
+                    "max_tokens": 1,
                 },
                 timeout=60,
             )

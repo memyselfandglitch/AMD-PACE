@@ -21,3 +21,7 @@ class ModelArgs:
 class GenerationArgs:
     batch_size: int
     kv_cache_type: str
+    think_end_token: Optional[str] = None
+    apply_chat_template: bool = False
+    fewshot_as_multiturn: bool = True
+    system_instruction: Optional[str] = None

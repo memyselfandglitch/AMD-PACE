@@ -1,0 +1,44 @@
+# ******************************************************************************
+# Copyright (c) 2026 Advanced Micro Devices, Inc.
+# All rights reserved.
+# Portions of this file consist of AI-generated content
+# ******************************************************************************
+
+[build-system]
+# IMPORTANT: install with --no-build-isolation. The parent setup.py
+# imports torch and runs cmake/ninja, which we cannot fully express
+# under PEP 518's build-isolation contract. See packages/pace_vllm/README.md.
+requires = ["setuptools>=77.0.3", "setuptools-scm>=8.1", "wheel>=0.41"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pace-vllm"
+authors = [{ name = "AMD" }]
+maintainers = [{ name = "AMD" }]
+readme = { file = "docs/PYPI_README.md", content-type = "text/markdown" }
+description = "PACE platform plugin for vLLM CPU inference on AMD EPYC processors."
+requires-python = ">=3.10,<3.14"
+license = "MIT"
+license-files = ["LICENSE", "NOTICE"]
+keywords = ["amd", "pace", "vllm", "llm", "inference", "cpu"]
+dynamic = ["version"]
+
+[project.urls]
+Homepage      = "https://github.com/amd/amd-pace"
+Documentation = "https://github.com/amd/amd-pace/tree/main/packages/pace_vllm#readme"
+Repository    = "https://github.com/amd/amd-pace"
+Issues        = "https://github.com/amd/amd-pace/issues"
+
+[project.entry-points."vllm.platform_plugins"]
+pace = "pace_vllm:register"
+
+[tool.setuptools_scm]
+root = "../.."
+relative_to = "pyproject.toml"
+version_file = "pace_vllm/_version.py"
+
+[tool.setuptools.packages.find]
+include = ["pace_vllm*"]
+
+[tool.setuptools.package-data]
+pace_vllm = ["lib/libpace_cpp.so", "_fakes_snapshot.py", "_version.py"]

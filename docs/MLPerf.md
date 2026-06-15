@@ -25,7 +25,7 @@ All dependencies (including `mlcommons-loadgen`, `rouge_score`, etc.) are in `re
 ```bash
 conda create -n mlperf python=3.12 -y
 conda activate mlperf
-cd /path/to/amd_pace/benchmarks/llm/performance/mlperf
+cd /path/to/amd-pace/benchmarks/llm/performance/mlperf
 pip install -r requirements.txt
 ```
 
@@ -40,10 +40,11 @@ Download the CNN/DailyMail evaluation dataset (e.g. via [MLCommons r2-downloader
 Example (r2-downloader):
 
 ```bash
-mkdir -p data
+mkdir -p data && cd data
 bash <(curl -s https://raw.githubusercontent.com/mlcommons/r2-downloader/refs/heads/main/mlc-r2-downloader.sh) \
   https://inference.mlcommons-storage.org/metadata/llama3-1-8b-cnn-eval.uri
 # Move or symlink the resulting file to data/cnn_eval.json as expected by the benchmark.
+cd ..
 ```
 
 ### 4. Model (for tokenizer and optional local use)

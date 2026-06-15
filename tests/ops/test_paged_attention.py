@@ -9,7 +9,7 @@ import torch
 import torch.nn.functional as F
 import unittest
 
-import pace._C  # noqa: F401
+import pace  # noqa: F401
 from pace.llm.attention.paged.ops import (
     paged_attention_reshape_and_cache,
     paged_attention_with_kv_cache,

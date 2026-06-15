@@ -4,7 +4,7 @@
 # ******************************************************************************
 
 from pydantic import BaseModel, ConfigDict, Field
-from typing import Union, Optional
+from typing import List, Union, Optional
 from typing import Dict, Any
 
 from uuid import UUID
@@ -12,20 +12,18 @@ import torch
 
 
 class PrefillRequest(BaseModel):
-    prompt: str = Field(..., min_length=1, description="The input prompt text")
+    prompt: List[int] = Field(
+        ..., min_length=1, description="Pre-tokenized prompt as a list of token IDs"
+    )
     request_id: Union[str, UUID, int] = Field(
         ..., description="Unique request identifier"
     )
     gen_config: Dict[str, Any] = Field(
         default_factory=dict, description="Generation configuration parameters"
     )
-    mlperf_mode: bool = Field(
-        default=False, description="Enable MLPerf mode (skip text decoding)"
-    )
 
     class Config:
-        # Allow extra fields if needed
-        extra = "forbid"  # or "allow" if you want flexibility
+        extra = "forbid"
 
 
 class ModelConfig(BaseModel):

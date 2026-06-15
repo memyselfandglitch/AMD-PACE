@@ -4,15 +4,26 @@
 # Portions of this file consist of AI-Generated code.
 # ******************************************************************************
 
+"""Internal data structures, metrics histograms, and HTTP configuration.
+
+Protocol-level models (OpenAI request/response shapes) live in ``protocol.py``.
+This module owns ``Request`` (the internal envelope that wraps a protocol
+request for scheduling), ``RequestStats``, ``RequestStatus``, and the
+Prometheus histogram definitions.
+"""
+
 import os
 import asyncio
 import time
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
-from pydantic import BaseModel, model_validator
-from typing import List, Optional, Union, Any
+from typing import Any, Dict, List, Optional
+
 from prometheus_client import Histogram
+
+from pace.server.router.protocol import CompletionRequest  # noqa: F401 - re-export
+
 
 TTFT_BUCKETS = [
     0.1,
@@ -81,52 +92,6 @@ class RequestStatus(str, Enum):
     ERROR = "error"
 
 
-class CompletionResponse(BaseModel):
-    request_id: str
-    status: str
-    message: Optional[str] = None
-    created_at: Optional[str] = None  # ISO formatted timestamp
-
-
-class GenerationConfig(BaseModel):
-    max_new_tokens: Optional[int] = None
-    min_new_tokens: Optional[int] = None
-    ignore_eos: Optional[bool] = None
-    temperature: Optional[float] = None
-    top_p: Optional[float] = None
-    seed: Optional[int] = None
-    stop_strings: Optional[Union[str, List[str]]] = None
-    top_k: Optional[int] = None
-    do_sample: Optional[bool] = None
-    repetition_penalty: Optional[float] = None
-    frequency_penalty: Optional[float] = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_fields(cls, data):
-        if isinstance(data, dict):
-            if "num_beams" in data:
-                raise ValueError(
-                    "Beam search is no longer supported. "
-                    "Remove 'num_beams' from your request."
-                )
-            if "max_tokens" in data and "max_new_tokens" not in data:
-                data["max_new_tokens"] = data.pop("max_tokens")
-            if "stop" in data and "stop_strings" not in data:
-                data["stop_strings"] = data.pop("stop")
-        return data
-
-
-class CompletionRequest(BaseModel):
-    model: str = "facebook/opt-6.7b"
-    prompt: Union[List[str], str]
-    stream: bool = False
-    gen_config: Optional[GenerationConfig] = None
-    mlperf_mode: bool = False  # Enable MLPerf mode (skip text decoding)
-    input_length: Optional[int] = None
-    prompt_tokens: Optional[int] = None  # For MLPerf dataset
-
-
 @dataclass
 class RequestStats:
     created_at: float = field(default_factory=time.time)
@@ -150,48 +115,66 @@ class RequestStats:
 
 
 class Request:
+    """Internal request envelope used by scheduler and engine_client.
+
+    Wraps the OpenAI ``CompletionRequest`` from ``protocol.py`` and holds
+    scheduling state, token queue, pre-translated engine config, and
+    per-request statistics.
+    """
+
     def __init__(
         self,
         req: CompletionRequest,
-        req_sampling_params: GenerationConfig,
         token_queue: asyncio.Queue,
+        engine_gen_config: Optional[Dict[str, Any]] = None,
+        prompt_index: int = 0,
+        group_id: Optional[str] = None,
     ):
         self.req: CompletionRequest = req
         self.request_id: str = str(uuid.uuid4())
-        self.req_sampling_params: GenerationConfig = req_sampling_params
         self.token_queue: asyncio.Queue = token_queue
         self.status: RequestStatus = RequestStatus.QUEUED
-        # Default to first engine (index 0); scheduler sets these in submit_request()
         self.assigned_engine_index: int = 0
         self.assigned_engine_url: Optional[str] = None
         self.response_queue: asyncio.Queue = asyncio.Queue()
         self.batch_submit_time: Optional[float] = None
         self.priority: str = "normal"
         self.req_stats = RequestStats()
-        # Extracted once from completion request; used by schedulers and frontend
+
+        self.prompt_index: int = prompt_index
+        self.group_id: Optional[str] = group_id
+
+        if engine_gen_config is not None:
+            self.engine_gen_config = engine_gen_config
+        else:
+            self.engine_gen_config = req.to_engine_config()
+
         self.mlperf_mode: bool = getattr(req, "mlperf_mode", False)
+        self.echo: bool = getattr(req, "echo", False) or False
+        self.suffix: Optional[str] = getattr(req, "suffix", None)
+        self.finish_reason: str = "stop"
+
+        stop = getattr(req, "stop", None)
+        if isinstance(stop, str):
+            self.stop_strings: List[str] = [stop]
+        elif isinstance(stop, list):
+            self.stop_strings: List[str] = list(stop)
+        else:
+            self.stop_strings: List[str] = []
 
 
 class HTTPConfig:
-    """
-    HTTP timeout configuration for engine requests.
+    """HTTP timeout configuration for engine requests.
+
     Defaults optimized for LLM inference: total=300s, connect/sock_connect/sock_read=30s.
     Override via HTTP_TIMEOUT_* environment variables.
     """
 
     def __init__(self):
-        self.total = float(
-            os.environ.get("HTTP_TIMEOUT_TOTAL", "300")
-        )  # Total request timeout (5 min for long inference)
-        self.connect = float(
-            os.environ.get("HTTP_TIMEOUT_CONNECT", "30")
-        )  # Connection establishment timeout in seconds
-        self.sock_connect = float(
-            os.environ.get("HTTP_TIMEOUT_SOCK_CONNECT", "30")
-        )  # Socket connection timeout in seconds
-        self.sock_read = float(
-            os.environ.get("HTTP_TIMEOUT_SOCK_READ", "30")
-        )  # Read timeout between data chunks  in seconds
+        self.total = float(os.environ.get("HTTP_TIMEOUT_TOTAL", "300"))
+        self.connect = float(os.environ.get("HTTP_TIMEOUT_CONNECT", "30"))
+        self.sock_connect = float(os.environ.get("HTTP_TIMEOUT_SOCK_CONNECT", "30"))
+        self.sock_read = float(os.environ.get("HTTP_TIMEOUT_SOCK_READ", "30"))
 
         for name, value in vars(self).items():
             if value <= 0:

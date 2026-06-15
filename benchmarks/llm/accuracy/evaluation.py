@@ -48,6 +48,9 @@ def eval(
         batch_size=generation_args.batch_size,
         num_fewshot=num_fewshot,
         limit=limit,
+        apply_chat_template=generation_args.apply_chat_template,
+        fewshot_as_multiturn=generation_args.fewshot_as_multiturn,
+        system_instruction=generation_args.system_instruction,
     )
     PACE_LLM_INFO(
         f"Evaluation completed for task {tasks} with {num_fewshot} fewshot examples"

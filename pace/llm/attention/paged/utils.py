@@ -20,10 +20,8 @@ import torch
 
 from pace.llm.attention.base import KVCacheType, KVCacheManager
 from pace.llm.attention.paged.cache import PagedKVCache, compute_slot_mapping
-from pace.llm.attention.paged.cache import compute_single_slot  # noqa: F401
 from pace.llm.attention.paged.ops import (
     PagedAttentionMetadata,
-    get_paged_attention_scheduler_metadata,
     get_optimal_attention_isa,
 )
 
@@ -162,7 +160,6 @@ def build_paged_attention_metadata(
     batch_size = len(actual_lengths)
 
     num_heads = model_config.num_attention_heads
-    num_kv_heads = getattr(model_config, "num_key_value_heads", num_heads)
     head_dim = getattr(model_config, "head_dim", model_config.hidden_size // num_heads)
 
     if past_lengths is None:
@@ -218,20 +215,19 @@ def build_paged_attention_metadata(
     block_table = torch.stack(all_block_rows)
 
     isa = get_cached_isa(dtype, block_size, head_dim)
-    scheduler_metadata = get_paged_attention_scheduler_metadata(
-        num_reqs=batch_size,
-        num_heads=num_heads,
-        num_kv_heads=num_kv_heads,
-        head_dim=head_dim,
-        seq_lens=seq_lens,
-        dtype=dtype,
-        query_start_loc=query_start_loc,
-        causal=True,
-        sliding_window_size=-1,
-        isa=isa,
-        enable_kv_split=True,
-    )
 
+    # Paged attention writes KV via reshape_and_cache (C++ kernel) which
+    # does not update PagedKVCache.seq_len.  Sync it here so that
+    # remove_cache() (used by speculative decoding rollback) sees the
+    # correct token count.  For batch_size > 1 with a shared cache,
+    # use max_seq_len since all sequences share the same cache objects.
+    target_seq_len = max_seq_len
+    for co in kv_cache_manager.cache_objects:
+        co.seq_len = target_seq_len
+
+    # scheduler_metadata is intentionally left as None here.
+    # PagedAttentionBackend.forward() builds it per-layer with the
+    # correct sliding_window_size, matching the vLLM approach.
     return PagedAttentionMetadata(
         isa=isa,
         num_actual_tokens=total_tokens,
@@ -241,7 +237,6 @@ def build_paged_attention_metadata(
         seq_lens=seq_lens,
         block_table=block_table,
         slot_mapping=slot_mapping,
-        scheduler_metadata=scheduler_metadata,
         causal=True,
     )
 
@@ -302,7 +297,6 @@ def build_batched_paged_attention_metadata(
     num_reqs = len(layer_caches)
 
     num_heads = model_config.num_attention_heads
-    num_kv_heads = getattr(model_config, "num_key_value_heads", num_heads)
     head_dim = getattr(model_config, "head_dim", model_config.hidden_size // num_heads)
 
     if isa is None:
@@ -365,20 +359,9 @@ def build_batched_paged_attention_metadata(
     else:
         block_table = torch.zeros(num_reqs, 1, dtype=torch.int32)
 
-    scheduler_metadata = get_paged_attention_scheduler_metadata(
-        num_reqs=num_reqs,
-        num_heads=num_heads,
-        num_kv_heads=num_kv_heads,
-        head_dim=head_dim,
-        seq_lens=seq_lens,
-        dtype=dtype,
-        query_start_loc=query_start_loc,
-        causal=True,
-        sliding_window_size=-1,
-        isa=isa,
-        enable_kv_split=True,
-    )
-
+    # scheduler_metadata is intentionally left as None here.
+    # PagedAttentionBackend.forward() builds it per-layer with the
+    # correct sliding_window_size, matching the vLLM approach.
     return PagedAttentionMetadata(
         isa=isa,
         num_actual_tokens=num_reqs * query_len,
@@ -388,6 +371,5 @@ def build_batched_paged_attention_metadata(
         seq_lens=seq_lens,
         block_table=block_table,
         slot_mapping=slot_mapping,
-        scheduler_metadata=scheduler_metadata,
         causal=True,
     )

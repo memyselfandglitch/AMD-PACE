@@ -27,7 +27,12 @@ from pace.llm.models.model_list import models_supported
 class DisabledTqdm(tqdm):
 
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs, disable=True)
+        # huggingface_hub 1.x passes `disable=` to the configured tqdm_class
+        # itself (via functools.partial in _snapshot_download). Older
+        # versions did not. Write into kwargs unconditionally so the same
+        # class works against both.
+        kwargs["disable"] = True
+        super().__init__(*args, **kwargs)
 
 
 def download_or_cached_weights(

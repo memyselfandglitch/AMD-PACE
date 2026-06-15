@@ -43,7 +43,7 @@ def encode_inputs(tokenizer: PreTrainedTokenizer, inputs):
         messages, tokenize=False, add_generation_prompt=True
     )
 
-    return tokenizer.batch_encode_plus([text], return_tensors="pt", padding="longest")
+    return tokenizer([text], return_tensors="pt", padding="longest")
 
 
 def decode_outputs(tokenizer, outputs):

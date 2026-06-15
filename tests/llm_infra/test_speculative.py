@@ -36,11 +36,15 @@ class MockDraftModel:
     def __init__(self):
         self.config = MockDraftModelConfig()
         self._dummy_param = torch.nn.Parameter(torch.zeros(1, dtype=torch.bfloat16))
+        self.last_input_ids = None
+        self.last_positions = None
 
     def parameters(self):
         return iter([self._dummy_param])
 
     def __call__(self, input_ids, positions, kv_cache, **kwargs):
+        self.last_input_ids = input_ids
+        self.last_positions = positions
         batch_size = input_ids.shape[0]
         seq_len = input_ids.shape[1]
         vocab_size = 100
@@ -143,6 +147,70 @@ class TestPardSpeculativeDecoder(TestCase):
 
         self.assertIsInstance(result, VerificationOutput)
         self.assertGreaterEqual(result.accepted_tokens.shape[1], 1)
+
+    def test_speculate_with_initial_positions(self):
+        """Padded prefill: num_computed advances by actual_length + spec_count,
+        not by padded_length + spec_count."""
+        kv_cache = self.decoder.create_draft_kv_cache(128, KVCacheType.DYNAMIC)
+        num_computed = torch.zeros(1, dtype=torch.long)
+
+        # Left-padded prompt: 3 pad tokens + 3 real tokens
+        model_input = torch.tensor([[0, 0, 0, 42, 43, 44]])
+        initial_positions = torch.tensor([[0, 0, 0, 0, 1, 2]])
+
+        output = self.decoder.speculate(
+            model_input,
+            draft_kv_cache=kv_cache,
+            draft_num_computed=num_computed,
+            initial_positions=initial_positions,
+        )
+
+        actual_length = 3
+        spec_count = self.decoder.num_speculative_tokens - 1
+        expected_num_computed = actual_length + spec_count
+
+        self.assertIsInstance(output, SpeculationOutput)
+        self.assertEqual(
+            output.extended_input.shape[1],
+            model_input.shape[1] + self.decoder.num_speculative_tokens,
+        )
+        self.assertEqual(num_computed.item(), expected_num_computed)
+
+    @patch("pace.llm.speculative.init_model", return_value=MockDraftModel())
+    @patch("pace.llm.speculative.resolve_model_path", return_value="/mock/path")
+    @patch("pace.llm.generator.validate_generator_inputs", return_value=None)
+    def test_speculate_initial_positions_paged_packs_input(
+        self, mock_validate, mock_resolve, mock_init
+    ):
+        """Paged + padded prefill: draft model receives packed input
+        stripped of padding, with actual query lengths in metadata."""
+        decoder = PardSpeculativeDecoder(config=self.config, dtype=torch.bfloat16)
+
+        model_input = torch.tensor([[0, 0, 0, 42, 43, 44]])
+        initial_positions = torch.tensor([[0, 0, 0, 0, 1, 2]])
+        actual_length = 3
+
+        sampling_config = SamplingConfig(max_new_tokens=20, eos_token_id=[2])
+        sampling_config.finalize()
+        decoder.prepare(model_input, sampling_config, KVCacheType.PAGED)
+
+        output = decoder.speculate(model_input, initial_positions=initial_positions)
+
+        spec_count = decoder.num_speculative_tokens - 1
+        expected_packed_len = actual_length + spec_count
+
+        self.assertIsInstance(output, SpeculationOutput)
+
+        # Draft model must receive packed (padding-stripped) input
+        self.assertEqual(decoder.model.last_input_ids.shape, (1, expected_packed_len))
+        self.assertEqual(decoder.model.last_positions.shape, (1, expected_packed_len))
+
+        # Packed positions should be sequential [0, 1, ..., packed_len-1]
+        expected_positions = torch.arange(expected_packed_len).unsqueeze(0)
+        self.assertTrue(torch.equal(decoder.model.last_positions, expected_positions))
+
+        # num_computed should advance by actual_length + spec_count
+        self.assertEqual(decoder._num_computed_tokens.item(), expected_packed_len)
 
     def test_get_stats_empty(self):
         self.decoder._total_accepted = []

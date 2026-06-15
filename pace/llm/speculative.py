@@ -131,12 +131,17 @@ class SpeculativeDecoder(ABC):
         model_input: torch.Tensor,
         draft_kv_cache: Optional[KVCacheManager] = None,
         draft_num_computed: Optional[torch.Tensor] = None,
+        initial_positions: Optional[torch.Tensor] = None,
     ) -> SpeculationOutput:
         """Generate speculated tokens for a *single* sequence.
 
         When ``draft_kv_cache`` / ``draft_num_computed`` are supplied they
         are used (and mutated in-place).  Otherwise the internal state
         created by ``prepare()`` is used (offline flow).
+
+        When ``initial_positions`` is provided (prefill with left-padded
+        inputs), padding-aware positions are constructed so the draft model
+        does not attend to padding tokens.
         """
         ...
 
@@ -362,6 +367,7 @@ class PardSpeculativeDecoder(SpeculativeDecoder):
         model_input: torch.Tensor,
         draft_kv_cache: Optional[KVCacheManager] = None,
         draft_num_computed: Optional[torch.Tensor] = None,
+        initial_positions: Optional[torch.Tensor] = None,
     ) -> SpeculationOutput:
         kv_cache, num_computed = self._resolve_draft_state(
             draft_kv_cache, draft_num_computed
@@ -369,12 +375,49 @@ class PardSpeculativeDecoder(SpeculativeDecoder):
 
         pard_input = self.prepare_draft_input(model_input)
 
-        pard_positions = self._compute_positions(pard_input.shape[-1], num_computed)
+        spec_count = pard_input.shape[-1] - model_input.shape[-1]
+        if initial_positions is not None:
+            # Prefill path: use padding-aware positions for the prompt tokens so
+            # _compute_pad_lens inside the attention backend correctly detects
+            # leading padding and masks those positions.  Sequential positions
+            # ([0, 1, ..., prompt_len-1]) would make pad_len appear to be zero,
+            # causing the draft model to attend to garbage pad tokens and
+            # producing wrong speculated tokens and corrupting num_computed
+            # for every subsequent decode step.
+            actual_lengths = initial_positions[:, -1:] + 1  # [B, 1]
+            spec_pos = actual_lengths + torch.arange(spec_count, dtype=torch.long)
+            pard_positions = torch.cat([initial_positions, spec_pos], dim=-1)
+            num_computed_delta = actual_lengths.squeeze(1) + spec_count
+        else:
+            pard_positions = self._compute_positions(pard_input.shape[-1], num_computed)
+            num_computed_delta = pard_input.shape[-1]
 
         draft_paged_meta = None
         if getattr(self, "_use_paged", False):
-            draft_query_len = torch.tensor([pard_input.shape[-1]], dtype=torch.long)
-            draft_past = torch.tensor([int(num_computed[0].item())], dtype=torch.long)
+            if initial_positions is not None:
+                # Prefill with left-padding: pack the input to strip pad
+                # tokens so the paged metadata query lengths reflect real
+                # token counts, mirroring Generator._pack_ragged.
+                per_seq_lengths = num_computed_delta
+                packed_tokens = []
+                packed_positions = []
+                for i in range(pard_input.shape[0]):
+                    seq_len_i = int(per_seq_lengths[i].item())
+                    packed_tokens.append(pard_input[i, -seq_len_i:])
+                    packed_positions.append(
+                        torch.arange(
+                            seq_len_i, dtype=torch.long, device=pard_input.device
+                        )
+                    )
+                pard_input = torch.cat(packed_tokens).unsqueeze(0)
+                pard_positions = torch.cat(packed_positions).unsqueeze(0)
+                draft_query_len = per_seq_lengths
+                draft_past = None
+            else:
+                draft_query_len = torch.tensor([pard_input.shape[-1]], dtype=torch.long)
+                draft_past = torch.tensor(
+                    [int(num_computed[0].item())], dtype=torch.long
+                )
             draft_dtype = next(self.model.parameters()).dtype
             draft_block_size = getattr(self.model.config, "block_size", 16)
             draft_paged_meta = build_paged_attention_metadata(
@@ -395,7 +438,7 @@ class PardSpeculativeDecoder(SpeculativeDecoder):
             pard_input, pard_positions, kv_cache=kv_cache, **pa_kwargs
         )
 
-        num_computed += pard_input.shape[-1]
+        num_computed += num_computed_delta
 
         speculated_tokens = speculated_output.logits[:, -self._draft_size :].argmax(
             dim=-1

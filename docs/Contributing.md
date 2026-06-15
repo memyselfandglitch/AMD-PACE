@@ -203,24 +203,34 @@ The directory structure should look like:
         }
         ```
 
-3. Once the function is defined and implementation is complete, within the `core_method.cpp` file, you can register the function with the AMD PACE library as follows:
-    1. Import the function in the `csrc/torch_extension_bindings.cpp` file.
-    2. Register the function within `torch_extension_bindings` method:
-        ```cpp
-        m.def(
-            "core_method",
-            &pace::core_method
-        );
-        ```
-4. The function can be imported and used in the python code as follows:
-    ```python
-    # Make sure to import torch before importing pace
-    import torch
-    import pace
+3. Once the function is defined and implementation is complete, register it as a torch dispatcher op in [`csrc/core/core_ops.cpp`](../csrc/core/core_ops.cpp). Tensor-free helper ops use the single-argument `m.def(schema, fn)` form (CompositeImplicitAutograd):
+    ```cpp
+    namespace pace {
+    namespace {
 
-    ret = pace.core.core_method(...)
+    void core_method_op(/* dispatcher-friendly arg types */) {
+      core_method(/* forward the call */);
+    }
+
+    } // namespace
+    } // namespace pace
+
+    TORCH_LIBRARY_FRAGMENT(pace, m) {
+      m.def("core_method(/* schema */) -> ()", &pace::core_method_op);
+    }
     ```
-5. Once the method is implemented, it needs to be documented in the `docs/CoreFunctions.md` file. The documentation should include the method signature, the input and output types, and a brief description of the function.
+    For tensor-returning ops, prefer the `TORCH_LIBRARY_FRAGMENT` + `TORCH_LIBRARY_IMPL(pace, CPU, m)` pattern shown in the operator workflow above.
+
+4. The function can be reached from Python via either the dispatcher directly or the `pace.core` shim (for backward compatibility on the three legacy helpers):
+    ```python
+    import torch
+    import pace  # noqa: F401 -- triggers torch.ops.load_library(libpace_cpp.so)
+
+    ret = torch.ops.pace.core_method(...)
+    ```
+    To expose the new op through `pace.core.<name>` as well, add a thin wrapper in [`pace/core.py`](../pace/core.py).
+
+5. Once the method is implemented, document it in `docs/CoreFunctions.md`. The documentation should include the method signature, the input and output types, and a brief description of the function.
 
 
 ## Logging in AMD PACE

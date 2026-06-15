@@ -2,7 +2,7 @@
 # Copyright (c) 2026 Advanced Micro Devices, Inc.
 # All rights reserved.
 # ******************************************************************************
-# In /amd_pace/tests run using python -m unittest -v ops/test_AOCLDLPLinear.py
+# In /amd-pace/tests run using python -m unittest -v ops/test_AOCLDLPLinear.py
 
 import os
 import warnings

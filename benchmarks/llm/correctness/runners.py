@@ -123,7 +123,7 @@ class HfRunner:
 
         for batch_start in range(0, len(prompts), batch_size):
             batch_prompts = prompts[batch_start : batch_start + batch_size]
-            encoded = self.tokenizer.batch_encode_plus(
+            encoded = self.tokenizer(
                 batch_prompts, return_tensors="pt", padding="longest"
             )
             prompt_len = encoded["input_ids"].shape[1]
@@ -250,7 +250,7 @@ class PaceRunner:
 
         for batch_start in range(0, len(prompts), batch_size):
             batch_prompts = prompts[batch_start : batch_start + batch_size]
-            encoded = self.tokenizer.batch_encode_plus(
+            encoded = self.tokenizer(
                 batch_prompts, return_tensors="pt", padding="longest"
             )
             prompt_len = encoded["input_ids"].shape[1]

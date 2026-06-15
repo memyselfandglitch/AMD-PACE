@@ -36,6 +36,7 @@ class StoppingCriteria(object):
         ) + self.initial_decoder_input_length
 
         self._max_length = None
+        self.stop_reason: str = "stop"
         self.stop_conditions = []  # To be used with conditions implemented in PACE
         self.hf_stop_conditions = []  # To be used with conditions implemented in HF
         if sampling_config.max_new_tokens is not None:
@@ -127,6 +128,10 @@ class StoppingCriteria(object):
         """
         Check if any of the stop conditions are met.
 
+        Also records ``self.stop_reason`` (``"stop"`` for EOS/stop-string,
+        ``"length"`` for max_tokens) so callers can read it without
+        re-evaluating the conditions.
+
         Args:
             logits (torch.Tensor): The logits tensor.
             num_new_tokens (int): Number of tokens appended this step.
@@ -135,17 +140,24 @@ class StoppingCriteria(object):
             torch.Tensor: A tensor of boolean values indicating if the sampling
                 should be stopped.
         """
-
-        # Initialize is_done to False, with one value for each sample
-        # in the batch. If any of the stop conditions are met, the
-        # corresponding value in is_done is set to True.
         is_done = torch.full((logits.shape[0],), False, dtype=torch.bool)
-        for condition in self.stop_conditions:
-            is_done = is_done | condition(logits=logits, num_new_tokens=num_new_tokens)
+        reason = "stop"
 
-        if self.hf_stop_conditions:
-            for condition in self.hf_stop_conditions:
-                is_done = is_done | condition(logits, scores=None)
+        for condition in self.stop_conditions:
+            result = condition(logits=logits, num_new_tokens=num_new_tokens)
+            if result.any() and not is_done.any():
+                reason = "length" if condition.func == self._stop_if_max_len else "stop"
+            is_done = is_done | result
+
+        for condition in self.hf_stop_conditions:
+            result = condition(logits, scores=None)
+            if result.any() and reason == "length":
+                reason = "stop"
+            is_done = is_done | result
+
+        if is_done.any():
+            self.stop_reason = reason
+
         return is_done
 
     def stop_now(self, logits: torch.Tensor, num_new_tokens: int = 1) -> torch.Tensor:
@@ -165,6 +177,9 @@ class StoppingCriteria(object):
 
         if logits.shape[-1] < self._min_length:
             if self._max_length is not None:
-                return self._stop_if_max_len(logits, self._max_length)
+                result = self._stop_if_max_len(logits, self._max_length)
+                if result.any():
+                    self.stop_reason = "length"
+                return result
             return torch.full((logits.shape[0],), False, dtype=torch.bool)
         return self._check_for_conditions(logits, num_new_tokens)

@@ -77,7 +77,7 @@ async def check_server() -> bool:
                     "model": MODEL,
                     "prompt": "probe",
                     "stream": False,
-                    "gen_config": {"max_new_tokens": 1},
+                    "max_tokens": 1,
                 },
             )
             if (
@@ -137,11 +137,8 @@ async def stream_to_tile(prompt: str, tile: Tile, tokenizer):
         "model": MODEL,
         "prompt": prompt,
         "stream": True,
-        "gen_config": {
-            "max_new_tokens": MAX_NEW_TOKENS,
-            "temperature": 0,
-            "do_sample": False,
-        },
+        "max_tokens": MAX_NEW_TOKENS,
+        "temperature": 0,
     }
     hdrs = {"Content-Type": "application/json", "Accept": "text/event-stream"}
     tile.start = time.time()
@@ -163,11 +160,7 @@ async def stream_to_tile(prompt: str, tile: Tile, tokenizer):
                             break
                         try:
                             obj = json.loads(line[6:])
-                            content = (
-                                obj.get("choices", [{}])[0]
-                                .get("delta", {})
-                                .get("content", "")
-                            )
+                            content = obj.get("choices", [{}])[0].get("text", "")
                             if content:
                                 if tile.first_token_time is None:
                                     tile.first_token_time = time.time()

@@ -12,7 +12,7 @@ FILE(GLOB PACETENSOR_CPP_FILES ${CSRC_ROOT_FOLDER}/pace_tensor/*.cpp)
 add_subdirectory(${CSRC_ROOT_FOLDER}/ops)
 
 # Merge them into lists
-set(ALL_CPP_FILES ${CSRC_ROOT_FOLDER}/torch_extension_bindings.cpp
+set(ALL_CPP_FILES
     ${CORE_CPP_FILES} ${GRAPH_CPP_FILES} ${OPS_CPP_FILES}
     ${KERNELS_CPP_FILES} ${KERNELS_AVX512_CPP_FILES} ${PACETENSOR_CPP_FILES} ${LIBXSMM_CPP_FILES})
 
@@ -66,7 +66,6 @@ target_include_directories(${LIBRARY_NAME} PUBLIC ${FBGEMM_INCLUDE_DIR})
 target_include_directories(${LIBRARY_NAME} PUBLIC ${LIBXSMM_INCLUDE_DIR})
 target_include_directories(${LIBRARY_NAME} PUBLIC ${AOCLDLP_INCLUDE_DIR})
 target_include_directories(${LIBRARY_NAME} PUBLIC ${TORCH_INCLUDE_DIRS})
-target_include_directories(${LIBRARY_NAME} PUBLIC ${PYTHON_INCLUDE_DIR})
 
 # link libraries
 target_compile_options(${LIBRARY_NAME} BEFORE PUBLIC ${TORCH_CXX_FLAGS} ${OpenMP_CXX_FLAGS})

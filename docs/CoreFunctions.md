@@ -1,17 +1,17 @@
 # AMD PACE Core Functions
 
-These are the core functions of AMD PACE, which are not essentially ops but are helper functions to perform various tasks. These are not registered as ops in the `torch` library, but are available in the `pace` library.
+These are the core helper functions of AMD PACE. They are not arithmetic ops in the traditional sense; they expose process-level utilities (thread binding, logging, JIT-pass toggle) to Python.
 
-The methods are registered in the library using `PYBIND11_MODULE` in `csrc/init.cpp`, which delegates to `csrc/torch_extension_bindings.cpp`.
+The methods are registered as torch dispatcher ops on the `pace` namespace in [`csrc/core/core_ops.cpp`](../csrc/core/core_ops.cpp). At runtime they are reached via `torch.ops.pace.*`, and the `pace.core` Python module ([`pace/core.py`](../pace/core.py)) wraps them with familiar names so existing call sites keep working.
 
 The methods are listed below.
 
 ### thread_bind
-This method is implemented with the help of `pthread_setaffinity_np` function and provides an API to python to bind the calling thread to a specific core or a set of cores.
-* Operation: `pace.core.thread_bind`
+This method is implemented with the help of `pthread_setaffinity_np` and provides an API to python to bind the calling thread to a specific core or a set of cores.
+* Operation: `pace.core.thread_bind` (dispatcher op: `torch.ops.pace.thread_bind`)
 * Arguments:
-    * `List core_ids`: List of core ids to bind the thread to.
-* File: `csrc/core/threading.cpp`
+    * `int[] core_ids`: List of core ids to bind the thread to.
+* Files: `csrc/core/threading.cpp` (implementation), `csrc/core/core_ops.cpp` (registration)
 * Example usage:
     ```python
     import pace
@@ -28,7 +28,7 @@ This method is implemented with the help of `pthread_setaffinity_np` function an
 
 ## pace_logger
 This method provides an API to python to log messages to the console.
-* Operation: `pace.core.pace_logger`
+* Operation: `pace.core.pace_logger` (dispatcher op: `torch.ops.pace.log`)
 * Arguments:
     * `int level`: Log level. Can be one of the following:
         * `0`: DEBUG
@@ -36,8 +36,8 @@ This method provides an API to python to log messages to the console.
         * `2`: INFO
         * `3`: WARNING
         * `4`: ERROR
-    * `String message`: Message to be logged.
-* File: `csrc/core/logging.cpp`
+    * `str message`: Message to be logged.
+* Files: `csrc/core/logging.h` (implementation), `csrc/core/core_ops.cpp` (registration)
 * Example usage: This method is (ideally) not to be used directly by the user, but is used internally by the python library to log messages. A helper method is provided as part of utils and can be used by
 
     ```

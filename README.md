@@ -2,11 +2,15 @@
 
 AMD PACE is a high-performance LLM inference engine built from the ground up for AMD EPYC CPUs. It is a PyTorch C++ extension that combines custom AVX512 kernels, CPU-native KV cache management, and a production-ready serving stack to deliver maximum throughput on AMD server-class hardware.
 
-🔥 **Check out our blog post: [AMD PACE: High-Performance Platform Aware Compute Engine](https://www.amd.com/en/developer/resources/technical-articles/2026/amd-pace---high-performance-platform-aware-compute-engine.html)** — deep dive into the architecture, optimizations, and benchmarks showing **1.6x autoregressive** and **3.2x speculative decoding** throughput speedup over vLLM on 5th Gen AMD EPYC™ processors.
+🔥 **Check out our latest blog post: [AMD PACE - A vLLM Plugin for CPU Inference](https://www.amd.com/en/developer/resources/technical-articles/2026/amd-pace-integrates-with-vllm.html)** — how PACE plugs into vLLM as a CPU platform plugin: a single `pip install pace-vllm`, no application code changes, routing vLLM's CPU worker through PACE's SLAB attention, tuned Linear/RMSNorm operators, and fused MLP on 5th Gen AMD EPYC™ processors.
+
+📦 **Now available on PyPI** — `pip install amd-pace` (and `pip install pace-vllm` for the [vLLM plugin](packages/pace_vllm/README.md)). Pre-built **manylinux wheels** for Python 3.10 – 3.13; no compiler required.
 
 > NOTE: AMD PACE is designed and tested for systems with AVX512 or higher support. On systems lacking AVX512, performance may degrade significantly due to fallback to slower reference implementations, or the library might not function as intended.
 
 ## Highlights
+
+* **vLLM Plugin (`pace-vllm`)** — A drop-in [vLLM platform plugin](https://docs.vllm.ai/en/latest/design/plugin_system.html) that routes vLLM's CPU worker through PACE's kernels and SlabPool KV cache, with no changes to your existing vLLM scripts. Replaces vLLM's CPU attention backend, KV cache, and Linear/RMSNorm layers with PACE equivalents; under compile mode also fuses gated/ungated MLP blocks into a single `pace::libxsmm_fused_mlp` call. Lets you keep the vLLM API and get PACE's CPU performance underneath. More in [packages/pace_vllm/README.md](packages/pace_vllm/README.md).
 
 * **SlabPool Attention** — A CPU-native KV cache and attention backend engineered for AMD EPYC processors. SlabPool manages all sequences in a single pre-allocated BF16 tensor with O(1) slab allocation, L2-aware block sizing, and a unified attention dispatcher that selects the optimal kernel path per sequence — GQA-aware decode with online softmax, multi-token decode, or tiled prefill — all within one OMP dispatch. Handles offline and online inference, continuous batching, sliding window, and sink attention through a single entry point. More in [SlabAttention.md](docs/SlabAttention.md).
 
@@ -23,6 +27,7 @@ AMD PACE is a high-performance LLM inference engine built from the ground up for
 ## Contents
 
 * [Installation](#installation)
+* [vLLM Plugin (`pace-vllm`)](packages/pace_vllm/README.md)
 * [Inference Server](docs/InferenceServer.md)
 * [More about AMD PACE](docs/Plugin.md)
 * [Models Supported](#models-supported)
@@ -37,27 +42,41 @@ AMD PACE is a high-performance LLM inference engine built from the ground up for
 * [Resources](#resources)
 
 ## Installation
-To install AMD PACE, follow the instructions below:
 
-> NOTE: AMD PACE will need gcc>=12 and make installed.
->
-> On ubuntu, they can be installed with `sudo apt install build-essential gcc-12 g++-12`
+AMD PACE provides pre-built **manylinux wheels** on PyPI — the simplest install path, no compiler needed. Building from source is supported for developers and bleeding-edge users.
 
-1. We recommend to use miniforge environment for installing AMD PACE. Install miniforge from [here](https://conda-forge.org/miniforge/).
-Once miniforge is installed, create a environment with python 3.12 as follows:
-    ```
-    conda create -n pace-env-py3.12 python=3.12 -y
-    conda activate pace-env-py3.12
-    ```
+### From PyPI (recommended)
 
-    NOTE: AMD PACE is tested to work with Python 3.10 through 3.13. Python 3.12 is recommended for the best compatibility with dependencies.
+1. **Create a Python 3.12 env with miniforge.** Install miniforge from [here](https://conda-forge.org/miniforge/), then:
+   ```
+   conda create -n pace-env-py3.12 python=3.12 -y
+   conda activate pace-env-py3.12
+   ```
 
-1. Install the required dependencies for AMD PACE as follows:
+   > AMD PACE is tested on Python 3.10 – 3.13; Python 3.12 is the most thoroughly exercised version.
+
+2. **Install CPU PyTorch.** The `+cpu` build is not published on PyPI, so it needs PyTorch's index:
+   ```
+   pip install --extra-index-url https://download.pytorch.org/whl/cpu torch==2.12.0+cpu
+   ```
+
+3. **Install amd-pace:**
+   ```
+   pip install amd-pace
+   ```
+
+### From source (developers)
+
+> NOTE: Building from source requires gcc>=12 and make. On Ubuntu: `sudo apt install build-essential gcc-12 g++-12`.
+
+1. **Create an env** — see [From PyPI](#from-pypi-recommended) above.
+
+2. **Install the required dependencies:**
     ```
     pip install -r requirements.txt
     ```
 
-1. Build AMD PACE from source as follows:
+3. **Build AMD PACE from source:**
     ```
     pip install -r build_requirements.txt [-v] .
     ```
@@ -121,9 +140,9 @@ The following feature combinations are not yet supported in this release and may
 
 | Feature | Unsupported Configuration | Supported Alternative |
 |---------|--------------------------|----------------------|
-| GPT-OSS | JIT attention backend, PAGED cache type | SLAB_POOL cache with SLAB attention backend |
-| PARD speculative decoding (offline) | PAGED cache type | BMC or SLAB_POOL cache types |
-| PARD speculative decoding (server) | PAGED or SLAB_POOL cache types | BMC cache type |
+| GPT-OSS | JIT attention backend | SLAB_POOL cache with SLAB or PAGED attention backend |
+| Qwen2 | JIT attention backend | SLAB_POOL cache with SLAB or PAGED attention backend |
+| AMX-enabled CPUs | libXSMM kernels fail on the AMX instruction path | Set `LIBXSMM_TARGET=cpx` to force the AVX-512 (CPX) path and disable AMX |
 
 ## External Dependencies
 
@@ -131,7 +150,7 @@ The following feature combinations are not yet supported in this release and may
 
 | Library  | Version | Description |
 |----------|---------|-------------|
-| PyTorch  | v2.9.0  | Core framework (also a runtime dependency) |
+| PyTorch  | v2.12.0 | Core framework (also a runtime dependency) |
 | oneDNN   | v3.11   | JIT-compiled kernels for attention, norms, and linear ops |
 | FBGEMM   | v1.2.0  | Quantized EmbeddingBag kernels |
 | libXSMM  | [c14cbc6](https://github.com/libxsmm/libxsmm/commit/c14cbc6f8bc7964f8c5190a3a16b8cace03e5889) | Tensor Processing Primitives (TPP) for MLPs and linear ops |
@@ -141,16 +160,17 @@ The following feature combinations are not yet supported in this release and may
 
 | Package | Version |
 |---------|---------|
-| transformers | 4.55.2 |
+| transformers | 5.8.1 |
 | safetensors | >= 0.5.2 |
-| huggingface-hub | 0.35.0 |
+| huggingface-hub | 1.6.0 |
 | fastapi | 0.115.12 |
 | uvicorn | 0.34.2 |
 | prometheus_client | 0.23.1 |
 
-See `requirements.txt` for the full list of Python dependencies.
+See `runtime_requirements.txt` for the full list of runtime dependencies installed by `pip install amd-pace`; `requirements.txt` is the developer aggregator (runtime + build + bench/script + lint/test tools).
 
 ## Resources
 
+* [AMD PACE Blog: A vLLM Plugin for CPU Inference](https://www.amd.com/en/developer/resources/technical-articles/2026/amd-pace-integrates-with-vllm.html)
 * [AMD PACE Blog: High-Performance Platform Aware Compute Engine](https://www.amd.com/en/developer/resources/technical-articles/2026/amd-pace---high-performance-platform-aware-compute-engine.html)
 * [PARD (Parallel Draft) Speculative Decoding](https://github.com/AMD-AGI/PARD)

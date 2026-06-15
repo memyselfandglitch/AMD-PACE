@@ -25,8 +25,9 @@ from dataclasses import dataclass
 
 import torch
 
-# Import pace C++ ops (required for paged attention kernels)
-import pace._C  # noqa: F401
+# Importing pace triggers torch.ops.load_library on libpace_cpp.so, which
+# registers torch.ops.pace.* (paged attention kernels included).
+import pace  # noqa: F401
 
 
 @dataclass

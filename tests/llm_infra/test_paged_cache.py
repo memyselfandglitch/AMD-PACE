@@ -5,10 +5,13 @@
 # ******************************************************************************
 # python -m pytest tests/llm_infra/test_paged_cache.py -v
 
+import types
+
 import torch
 from torch.testing._internal.common_utils import TestCase
 
 from pace.llm.attention.paged.cache import (
+    PagedCache,
     PagedKVCache,
     PagedKVCachePool,
     SharedPagedKVCache,
@@ -451,3 +454,122 @@ class TestSharedPagedKVCache(TestCase):
         value = torch.randn(1, 4, 5, 64)
         with self.assertRaises(RuntimeError):
             cache.update_cache(key, value, concat_dim=2)
+
+
+def _make_config(**overrides):
+    """Create a minimal mock config for PagedCache."""
+    defaults = dict(
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        head_dim=64,
+        hidden_size=256,
+        num_hidden_layers=2,
+        max_position_embeddings=4096,
+    )
+    defaults.update(overrides)
+    return types.SimpleNamespace(**defaults)
+
+
+class TestPagedCacheMergeContexts(TestCase):
+    """Tests for PagedCache.merge_contexts — the server decode metadata builder."""
+
+    def _make_cache_and_contexts(self, num_reqs, seq_lens, block_size=16):
+        config = _make_config()
+        cache = PagedCache(config, block_size=block_size, max_total_tokens=8192)
+        contexts = []
+        for seq_len in seq_lens:
+            ctx = cache.create_context(config, max_seq_length=4096)
+            for co in ctx.cache_objects:
+                co.seq_len = seq_len
+                co._ensure_blocks_allocated(seq_len)
+            contexts.append(ctx)
+        return cache, contexts
+
+    def test_basic_decode_slot_mapping(self):
+        """slot_mapping should point to the correct physical slot for each request."""
+        cache, contexts = self._make_cache_and_contexts(2, [10, 20], block_size=16)
+        merged = cache.merge_contexts(contexts, query_len=1)
+        meta = merged.paged_attn_metadata
+
+        self.assertEqual(meta.slot_mapping.shape[0], 2)
+        for i, ctx in enumerate(contexts):
+            layer_cache = ctx.cache_objects[0]
+            past_len = 10 if i == 0 else 20
+            block_idx = past_len // 16
+            block_offset = past_len % 16
+            blocks = layer_cache.allocated_blocks
+            expected_slot = blocks[block_idx] * 16 + block_offset
+            self.assertEqual(
+                int(meta.slot_mapping[i]),
+                expected_slot,
+                f"Request {i}: expected slot {expected_slot}, got {int(meta.slot_mapping[i])}",
+            )
+
+    def test_decode_crossing_block_boundary(self):
+        """When past_len is at a block boundary, a new block should be allocated."""
+        block_size = 16
+        cache, contexts = self._make_cache_and_contexts(
+            1, [block_size - 1], block_size=block_size
+        )
+
+        # First decode: past_len=15, still within block 0.
+        merged = cache.merge_contexts(contexts, query_len=1)
+        meta = merged.paged_attn_metadata
+        blocks_before = contexts[0].cache_objects[0].allocated_blocks[:]
+        self.assertEqual(len(blocks_before), 1)
+
+        # After merge_contexts, seq_len is updated to 16.
+        # Next decode: past_len=16, crosses into block 1.
+        merged = cache.merge_contexts(contexts, query_len=1)
+        meta = merged.paged_attn_metadata
+        blocks_after = contexts[0].cache_objects[0].allocated_blocks
+        self.assertEqual(
+            len(blocks_after), 2, "A second block should be allocated at the boundary"
+        )
+
+        # slot_mapping should point into the second block at offset 0.
+        expected_slot = blocks_after[1] * block_size + 0
+        self.assertEqual(int(meta.slot_mapping[0]), expected_slot)
+
+    def test_seq_lens_updated_after_merge(self):
+        """merge_contexts should update seq_len on all layer cache objects."""
+        cache, contexts = self._make_cache_and_contexts(2, [5, 10])
+        cache.merge_contexts(contexts, query_len=1)
+
+        for i, (ctx, expected) in enumerate(zip(contexts, [6, 11])):
+            for layer_idx, co in enumerate(ctx.cache_objects):
+                self.assertEqual(
+                    co.seq_len,
+                    expected,
+                    f"Request {i}, layer {layer_idx}: seq_len should be {expected}",
+                )
+
+    def test_block_table_shape(self):
+        """block_table should have shape [num_reqs, max_blocks_per_seq]."""
+        cache, contexts = self._make_cache_and_contexts(3, [5, 20, 40], block_size=16)
+        merged = cache.merge_contexts(contexts, query_len=1)
+        meta = merged.paged_attn_metadata
+
+        self.assertEqual(meta.block_table.shape[0], 3)
+        max_blocks = (41 + 16 - 1) // 16  # longest seq_len=40 + 1 decode token
+        self.assertEqual(meta.block_table.shape[1], max_blocks)
+
+    def test_multiple_decode_steps(self):
+        """Simulate several decode steps; slot_mapping should advance correctly."""
+        block_size = 4
+        cache, contexts = self._make_cache_and_contexts(1, [0], block_size=block_size)
+
+        for step in range(10):
+            merged = cache.merge_contexts(contexts, query_len=1)
+            meta = merged.paged_attn_metadata
+
+            past_len = step
+            block_idx = past_len // block_size
+            block_offset = past_len % block_size
+            blocks = contexts[0].cache_objects[0].allocated_blocks
+            expected_slot = blocks[block_idx] * block_size + block_offset
+            self.assertEqual(
+                int(meta.slot_mapping[0]),
+                expected_slot,
+                f"Step {step}: slot mismatch",
+            )

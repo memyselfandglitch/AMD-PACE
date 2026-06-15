@@ -3,7 +3,14 @@
 # All rights reserved.
 # Portions of this file consist of AI-generated content.
 # ******************************************************************************
-"""MLPerf SUT for Server scenario (online accuracy/performance). Async streaming; PACE or vLLM."""
+"""MLPerf SUT for Server scenario (online accuracy/performance).
+
+Both PACE and vLLM expose the same OpenAI v1/completions API, so the
+payload and SSE streaming format are identical.  The only difference is
+that PACE accepts an extra ``mlperf_mode`` flag which switches its
+streaming output to raw token-ID lines (no SSE envelope, no JSON),
+avoiding redundant tokenize/detokenize round-trips during benchmarking.
+"""
 
 import array
 import asyncio
@@ -76,12 +83,7 @@ class SUT:
             self.data_object.UnloadSamplesFromRam,
         )
 
-        self.gen_config = {
-            "max_new_tokens": max_tokens,
-            "temperature": 0.0,
-            "top_p": 1.0,
-            "do_sample": False,
-        }
+        self.mlperf_mode = self.server_type == "pace"
 
         self.session: Optional[aiohttp.ClientSession] = None
         self.event_loop: Optional[asyncio.AbstractEventLoop] = None
@@ -131,34 +133,30 @@ class SUT:
                 self.loop_thread.join(timeout=5.0)
 
     def _format_request_payload(self, prompt_text, stream=False, query_id=None):
-        input_length = None
+        """Build the /v1/completions request body.
+
+        Both PACE and vLLM use the same OpenAI-native fields.
+        PACE additionally accepts ``mlperf_mode`` for raw token-ID streaming.
+        """
+        payload = {
+            "model": self.model_path,
+            "prompt": prompt_text,
+            "stream": stream,
+            "max_tokens": self.max_tokens,
+            "temperature": 0.0,
+            "top_p": 1.0,
+        }
+
+        if self.mlperf_mode:
+            payload["mlperf_mode"] = True
+
         if query_id is not None and hasattr(self.data_object, "input_lens"):
-            input_length = self.data_object.input_lens[query_id]
-
-        if self.server_type == "vllm":
-            payload = {
-                "model": self.model_path,
-                "prompt": prompt_text,
-                "stream": stream,
-                "max_tokens": self.gen_config.get("max_new_tokens", 128),
-                "temperature": self.gen_config.get("temperature", 0.0),
-                "top_p": self.gen_config.get("top_p", 1.0),
-            }
-        else:
-            payload = {
-                "model": self.model_path,
-                "prompt": prompt_text,
-                "stream": stream,
-                "gen_config": self.gen_config,
-                "mlperf_mode": True,
-            }
-
-        if input_length is not None:
-            payload["input_length"] = input_length
+            payload["input_length"] = self.data_object.input_lens[query_id]
 
         return payload
 
     def _tokenize_response(self, text):
+        """Encode text to token IDs (fallback for SSE text-based responses)."""
         if not text:
             return []
         return self.tokenizer.encode(text, add_special_tokens=False)
@@ -201,24 +199,6 @@ class SUTServer(SUT):
             server_type=server_type,
         )
 
-    def _parse_pace_streaming_chunk(self, chunk_data):
-        delta = chunk_data.get("choices", [{}])[0].get("delta", {})
-        token_id = delta.get("token_id")
-        if token_id is not None:
-            return token_id
-        return delta.get("content", "")
-
-    def _parse_vllm_streaming_chunk(self, chunk_data):
-        choices = chunk_data.get("choices", [])
-        if not choices:
-            return ""
-        delta = choices[0].get("delta", {})
-        token_text = delta.get("content", "")
-        if not token_text:
-            token_text = choices[0].get("text", "")
-
-        return token_text
-
     async def _make_streaming_request_async(
         self, prompt_text, query_id=None, max_retries=3
     ):
@@ -256,91 +236,23 @@ class SUTServer(SUT):
 
         response = None
         try:
-            first_token_sent = False
-            full_response = ""
             collected_token_ids = []
 
             response = await self._make_streaming_request_async(
                 prompt_text, query_id=query_id
             )
 
-            async for chunk in response.content.iter_any():
-                if chunk:
-                    decoded_chunk = chunk.decode("utf-8")
-                    for line in decoded_chunk.split("\n"):
-                        line = line.strip()
-                        if not line:
-                            continue
-
-                        if self.server_type == "pace":
-                            if line == "[DONE]":
-                                break
-                            try:
-                                token_id = int(line)
-                                collected_token_ids.append(token_id)
-
-                                if not first_token_sent:
-                                    first_tokens = [token_id]
-                                    response_data = array.array(
-                                        "B", np.array(first_tokens, np.int32).tobytes()
-                                    )
-                                    bi = response_data.buffer_info()
-                                    response_obj = [
-                                        lg.QuerySampleResponse(
-                                            query_sample.id, bi[0], bi[1]
-                                        )
-                                    ]
-                                    lg.FirstTokenComplete(response_obj)
-                                    first_token_sent = True
-                                continue
-                            except ValueError:
-                                pass
-
-                        if line.startswith("data: "):
-                            data_part = line[6:]
-                            if data_part.strip() == "[DONE]":
-                                break
-                            try:
-                                chunk_data = json.loads(data_part)
-                                if self.server_type == "vllm":
-                                    token_data = self._parse_vllm_streaming_chunk(
-                                        chunk_data
-                                    )
-                                else:
-                                    token_data = self._parse_pace_streaming_chunk(
-                                        chunk_data
-                                    )
-                                if isinstance(token_data, str):
-                                    token_text = token_data
-                                    if token_text and not first_token_sent:
-                                        first_tokens = self._tokenize_response(
-                                            token_text
-                                        )
-                                        response_data = array.array(
-                                            "B",
-                                            np.array(first_tokens, np.int32).tobytes(),
-                                        )
-                                        bi = response_data.buffer_info()
-                                        response_obj = [
-                                            lg.QuerySampleResponse(
-                                                query_sample.id, bi[0], bi[1]
-                                            )
-                                        ]
-                                        lg.FirstTokenComplete(response_obj)
-                                        first_token_sent = True
-
-                                    full_response += token_text
-                            except json.JSONDecodeError:
-                                continue
-
-            if collected_token_ids:
-                final_tokens = collected_token_ids
+            if self.mlperf_mode:
+                await self._process_mlperf_stream(
+                    response, query_sample, collected_token_ids
+                )
             else:
-                final_tokens = self._tokenize_response(full_response)
+                full_response = await self._process_sse_stream(response, query_sample)
+                collected_token_ids = self._tokenize_response(full_response)
 
-            n_tokens = len(final_tokens)
+            n_tokens = len(collected_token_ids)
             response_array = array.array(
-                "B", np.array(final_tokens, np.int32).tobytes()
+                "B", np.array(collected_token_ids, np.int32).tobytes()
             )
             bi = response_array.buffer_info()
             response_obj = [
@@ -357,6 +269,87 @@ class SUTServer(SUT):
         finally:
             if response is not None:
                 response.close()
+
+    async def _process_mlperf_stream(self, response, query_sample, collected_token_ids):
+        """Process mlperf_mode streaming: raw token-ID lines + [DONE].
+
+        PACE-specific optimisation. Each line is a plain integer token ID,
+        terminated by a ``[DONE]`` sentinel. No SSE framing, no JSON.
+        """
+        first_token_sent = False
+
+        async for chunk in response.content.iter_any():
+            if not chunk:
+                continue
+            for line in chunk.decode("utf-8").split("\n"):
+                line = line.strip()
+                if not line:
+                    continue
+                if line == "[DONE]":
+                    return
+                try:
+                    token_id = int(line)
+                except ValueError:
+                    continue
+
+                collected_token_ids.append(token_id)
+
+                if not first_token_sent:
+                    response_data = array.array(
+                        "B", np.array([token_id], np.int32).tobytes()
+                    )
+                    bi = response_data.buffer_info()
+                    lg.FirstTokenComplete(
+                        [lg.QuerySampleResponse(query_sample.id, bi[0], bi[1])]
+                    )
+                    first_token_sent = True
+
+    async def _process_sse_stream(self, response, query_sample):
+        """Process standard OpenAI SSE streaming (works for both PACE and vLLM).
+
+        Parses ``data: {json}`` lines from the SSE stream, extracts
+        ``choices[0].text`` (completions format), accumulates text, and
+        returns the full response for post-hoc tokenization.
+        """
+        first_token_sent = False
+        full_response = ""
+
+        async for chunk in response.content.iter_any():
+            if not chunk:
+                continue
+            for line in chunk.decode("utf-8").split("\n"):
+                line = line.strip()
+                if not line or not line.startswith("data: "):
+                    continue
+
+                data_part = line[6:]
+                if data_part.strip() == "[DONE]":
+                    return full_response
+
+                try:
+                    chunk_data = json.loads(data_part)
+                except json.JSONDecodeError:
+                    continue
+
+                choices = chunk_data.get("choices", [])
+                if not choices:
+                    continue
+                token_text = choices[0].get("text", "")
+
+                if token_text and not first_token_sent:
+                    first_tokens = self._tokenize_response(token_text)
+                    response_data = array.array(
+                        "B", np.array(first_tokens, np.int32).tobytes()
+                    )
+                    bi = response_data.buffer_info()
+                    lg.FirstTokenComplete(
+                        [lg.QuerySampleResponse(query_sample.id, bi[0], bi[1])]
+                    )
+                    first_token_sent = True
+
+                full_response += token_text
+
+        return full_response
 
     def issue_queries(self, query_samples):
         if not self.event_loop or not self.session:

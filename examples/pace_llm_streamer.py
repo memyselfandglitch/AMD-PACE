@@ -35,7 +35,7 @@ def encode_inputs(tokenizer, inputs):
     """
     Encode inputs using the tokenizer.
     """
-    return tokenizer.batch_encode_plus(inputs, return_tensors="pt", padding="longest")
+    return tokenizer(inputs, return_tensors="pt", padding="longest")
 
 
 def run_pace_llm():

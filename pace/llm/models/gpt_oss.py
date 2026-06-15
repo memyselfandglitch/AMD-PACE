@@ -277,7 +277,7 @@ class GptOssModel(nn.Module):
             rope_scaling=config.rope_scaling,
             rotary_dim=self.config.head_dim,
             max_position_embeddings=config.max_position_embeddings,
-            rope_theta=config.rope_theta,
+            rope_theta=config.rope_parameters["rope_theta"],
             backend_impl=opconfig.rope,
         )
 

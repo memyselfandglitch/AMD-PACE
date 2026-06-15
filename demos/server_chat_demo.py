@@ -82,7 +82,7 @@ async def check_server() -> bool:
                     "model": MODEL,
                     "prompt": "probe",
                     "stream": False,
-                    "gen_config": {"max_new_tokens": 1},
+                    "max_tokens": 1,
                 },
             )
             if (
@@ -108,12 +108,9 @@ async def generate(history: List[dict], user_msg: str) -> str:
         "model": MODEL,
         "prompt": prompt,
         "stream": True,
-        "gen_config": {
-            "max_new_tokens": MAX_NEW_TOKENS,
-            "temperature": 0,
-            "do_sample": False,
-            "stop": STOP_SEQUENCES,
-        },
+        "max_tokens": MAX_NEW_TOKENS,
+        "temperature": 0,
+        "stop": STOP_SEQUENCES,
     }
     hdrs = {"Content-Type": "application/json", "Accept": "text/event-stream"}
     full_text = ""
@@ -138,11 +135,7 @@ async def generate(history: List[dict], user_msg: str) -> str:
                             break
                         try:
                             obj = json.loads(line[6:])
-                            delta = (
-                                obj.get("choices", [{}])[0]
-                                .get("delta", {})
-                                .get("content", "")
-                            )
+                            delta = obj.get("choices", [{}])[0].get("text", "")
                             if delta:
                                 if first_tok is None:
                                     first_tok = time.time()

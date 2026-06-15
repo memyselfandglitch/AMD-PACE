@@ -89,7 +89,6 @@ def step(req: Dict[str, Any]):
                 prompt = prefill_req["prompt"]
                 req_id = prefill_req["req_id"]
                 generation_config = prefill_req.get("generation_config", {})
-                mlperf_mode = prefill_req.get("mlperf_mode", False)
 
                 gen_config_dict = (
                     {k: v for k, v in generation_config.items() if v is not None}
@@ -97,8 +96,6 @@ def step(req: Dict[str, Any]):
                     else {}
                 )
 
-                # Create request tuple for model_executor.prefill()
-                # and return gracefully if it does not validate
                 try:
                     if not req_id or not isinstance(req_id, str) or len(req_id) != 36:
                         error_msg = (
@@ -124,13 +121,11 @@ def step(req: Dict[str, Any]):
                     continue
 
                 try:
-                    # Execute prefill for this request (same as mlperf_scripts: prefill creates Sequence inside)
                     result = model_executor.prefill(
                         PrefillRequest(
                             request_id=req_uuid,
                             prompt=prompt,
                             gen_config=gen_config_dict,
-                            mlperf_mode=mlperf_mode,
                         )
                     )
                     results.append({"req_id": req_id, "result": result})
@@ -209,13 +204,11 @@ def get_sequences():
         prefill_sequences = []
         decode_sequences = []
 
-        # Get prefill queue sequences
         for seq_id, sequence in model_executor.prefill_queue.items():
             prefill_sequences.append(
                 {
                     "id": str(seq_id),
                     "state": sequence.state.name,
-                    "prompt": sequence.input_request,
                     "input_length": (
                         sequence.input_encoded.input_ids.shape[-1]
                         if hasattr(sequence, "input_encoded")
@@ -226,21 +219,15 @@ def get_sequences():
                         if hasattr(sequence, "sampling_config")
                         else 0
                     ),
-                    "output_tokens_generated": (
-                        len(sequence.output_str)
-                        if hasattr(sequence, "output_str")
-                        else 0
-                    ),
+                    "total_tokens": sequence._token_len,
                 }
             )
 
-        # Get decode queue sequences
         for seq_id, sequence in model_executor.decode_queue.items():
             decode_sequences.append(
                 {
                     "id": str(seq_id),
                     "state": sequence.state.name,
-                    "prompt": sequence.input_request,
                     "input_length": (
                         sequence.input_encoded.input_ids.shape[-1]
                         if hasattr(sequence, "input_encoded")
@@ -251,16 +238,7 @@ def get_sequences():
                         if hasattr(sequence, "sampling_config")
                         else 0
                     ),
-                    "output_tokens_generated": (
-                        len(sequence.output_str)
-                        if hasattr(sequence, "output_str")
-                        else 0
-                    ),
-                    "current_output": (
-                        sequence.output_str[-1]
-                        if hasattr(sequence, "output_str") and sequence.output_str
-                        else ""
-                    ),
+                    "total_tokens": sequence._token_len,
                 }
             )
 
@@ -314,7 +292,6 @@ def get_sequence_by_id(sequence_id: str):
                 detail="Invalid sequence ID format. Must be a valid UUID.",
             )
 
-        # Check prefill queue
         if seq_uuid in model_executor.prefill_queue:
             sequence = model_executor.prefill_queue[seq_uuid]
             return {
@@ -323,7 +300,6 @@ def get_sequence_by_id(sequence_id: str):
                     "id": str(seq_uuid),
                     "state": sequence.state.name,
                     "queue": "prefill",
-                    "prompt": sequence.input_request,
                     "input_length": (
                         sequence.input_encoded.input_ids.shape[-1]
                         if hasattr(sequence, "input_encoded")
@@ -334,11 +310,7 @@ def get_sequence_by_id(sequence_id: str):
                         if hasattr(sequence, "sampling_config")
                         else 0
                     ),
-                    "output_tokens_generated": (
-                        len(sequence.output_str)
-                        if hasattr(sequence, "output_str")
-                        else 0
-                    ),
+                    "total_tokens": sequence._token_len,
                     "sampling_config": (
                         {
                             "temperature": (
@@ -363,7 +335,6 @@ def get_sequence_by_id(sequence_id: str):
                 },
             }
 
-        # Check decode queue
         elif seq_uuid in model_executor.decode_queue:
             sequence = model_executor.decode_queue[seq_uuid]
             return {
@@ -372,7 +343,6 @@ def get_sequence_by_id(sequence_id: str):
                     "id": str(seq_uuid),
                     "state": sequence.state.name,
                     "queue": "decode",
-                    "prompt": sequence.input_request,
                     "input_length": (
                         sequence.input_encoded.input_ids.shape[-1]
                         if hasattr(sequence, "input_encoded")
@@ -383,19 +353,7 @@ def get_sequence_by_id(sequence_id: str):
                         if hasattr(sequence, "sampling_config")
                         else 0
                     ),
-                    "output_tokens_generated": (
-                        len(sequence.output_str)
-                        if hasattr(sequence, "output_str")
-                        else 0
-                    ),
-                    "current_output": (
-                        sequence.output_str[-1]
-                        if hasattr(sequence, "output_str") and sequence.output_str
-                        else ""
-                    ),
-                    "full_output": (
-                        sequence.output_str if hasattr(sequence, "output_str") else []
-                    ),
+                    "total_tokens": sequence._token_len,
                     "sampling_config": (
                         {
                             "temperature": (

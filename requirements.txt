@@ -1,26 +1,14 @@
-# This file contains the build requirements for ZenDNN_PACE.
-# It is used to install the necessary packages for building the project.
+# Developer convenience: build + runtime + benchmark/script + dev tools.
+# `pip install amd-pace` only pulls runtime_requirements.txt.
+
 -r build_requirements.txt
-torchvision==0.24.0+cpu     # required by lm_eval and transformers
-black==25.1.0
-numpy>=2.0.2
-hypothesis>=6.113.0
-huggingface-hub[hf_xet]==0.35.0
-transformers==4.55.2
-safetensors>=0.5.2
-flake8>=7.1.1
-expecttest>=0.2.1
-psutil>=7.0.0
+-r runtime_requirements.txt
+torchvision==0.27.0+cpu
 matplotlib>=3.9.4
 datasets>=3.3.2
-lm_eval==0.4.7
+lm_eval==0.4.12
 langdetect==1.0.9
-immutabledict==4.2.1
-protobuf>=6.31.1
-fastapi==0.115.12
-uvicorn==0.34.2
-uvloop==0.22.1
-pydantic==2.11.4
-httpx==0.28.1
-prometheus_client==0.23.1
-backports.strenum (>=1.3.1,<2.0) ; python_version < '3.11'
+black==25.1.0
+flake8>=7.1.1
+hypothesis>=6.113.0
+expecttest>=0.2.1

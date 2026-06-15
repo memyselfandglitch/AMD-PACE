@@ -1,5 +1,5 @@
 --extra-index-url https://download.pytorch.org/whl/cpu
-torch==2.9.0+cpu
+torch==2.12.0+cpu
 clang-format==19.1.7
 cmake==3.31.6
 setuptools>=77.0.3

@@ -10,10 +10,10 @@ import json
 import unittest
 from unittest.mock import Mock, AsyncMock, patch
 from pace.server.router.scheduler import IterativeScheduler, PrefillFirstScheduler
-from pace.server.router.utils import CompletionRequest, GenerationConfig, RequestStatus
+from pace.server.router.utils import CompletionRequest, RequestStatus
 
-# Import the actual endpoint functions from frontend
-import pace.server.router.frontend as frontend
+import pace.server.router.request_handler as request_handler
+from pace.server.router.streaming import set_scheduler
 import pace.server.launcher  # noqa: F401
 
 os.environ["PACE_LOG_LEVEL"] = "none"
@@ -23,12 +23,10 @@ class MockSessionFactory:
     """Factory class for creating mock aiohttp sessions with unified response structure."""
 
     @staticmethod
-    def create_standard_mock(
-        mock_session, prefill_output="Test", decode_output=" response"
-    ):
+    def create_standard_mock(mock_session, prefill_token_id=100, decode_token_id=200):
         """
         Create a unified mock session that works for both scheduler types.
-        Both schedulers use the same response format - the only difference is the request payload.
+        Engine returns token_ids (list of int) for all paths.
 
         Prefill response: {"status": "success", "results": [{"result": {"0": {...}}}]}
         Decode response: {"status": "success", "result": {"req_id": {...}}}
@@ -37,7 +35,6 @@ class MockSessionFactory:
 
         def create_mock_post(url, json=None):
             async def mock_json_response():
-                # Prefill request (has "prefill_batch" key)
                 if json and "prefill_batch" in json:
                     req_id = json["prefill_batch"][0]["req_id"]
                     captured_request_ids.append(req_id)
@@ -47,21 +44,21 @@ class MockSessionFactory:
                             {
                                 "result": {
                                     req_id: {
-                                        "output": prefill_output,
+                                        "token_ids": [prefill_token_id],
                                         "status": "PREFILL_COMPLETED",
+                                        "num_tokens_generated": 1,
                                     }
                                 }
                             }
                         ],
                     }
-                # Decode request (has "is_decode" key)
                 else:
-                    # Return results for all captured request IDs
                     result_dict = {}
                     for req_id in captured_request_ids:
                         result_dict[req_id] = {
-                            "output": decode_output,
+                            "token_ids": [decode_token_id],
                             "status": "COMPLETED",
+                            "num_tokens_generated": 1,
                         }
                     return {"status": "success", "result": result_dict}
 
@@ -96,10 +93,9 @@ class SchedulerDirectUnitTests(unittest.TestCase):
                 self.assertEqual(len(scheduler.processing_tasks), 0)
                 self.assertEqual(scheduler.get_queue_size(), 0)
                 self.assertEqual(scheduler.get_active_requests_count(), 0)
-                self.assertEqual(len(scheduler.ttft_intervals), 0)
-                self.assertEqual(len(scheduler.processing_intervals), 0)
+                self.assertEqual(len(scheduler.metrics.ttft_intervals), 0)
+                self.assertEqual(len(scheduler.metrics.processing_intervals), 0)
 
-                # PrefillFirstScheduler-specific attributes (decode_queues: list of dicts per worker)
                 if scheduler_class == PrefillFirstScheduler:
                     self.assertEqual(sum(len(q) for q in scheduler.decode_queues), 0)
 
@@ -113,16 +109,13 @@ class SchedulerDirectSyncUnitTests(unittest.TestCase):
             with self.subTest(scheduler=scheduler_class.__name__):
                 scheduler = scheduler_class("http://localhost:3000", True)
 
-                # Initial state
                 self.assertEqual(scheduler.get_queue_size(), 0)
                 self.assertEqual(scheduler.get_active_requests_count(), 0)
 
-                # Create mock request
                 mock_req = Mock()
                 mock_req.request_id = "test-123"
                 mock_req.status = RequestStatus.QUEUED
 
-                # Add to active requests
                 scheduler.active_requests[mock_req.request_id] = mock_req
                 self.assertEqual(scheduler.get_active_requests_count(), 1)
 
@@ -132,21 +125,23 @@ class SchedulerDirectSyncUnitTests(unittest.TestCase):
             with self.subTest(scheduler=scheduler_class.__name__):
                 scheduler = scheduler_class("http://localhost:3000", True)
 
-                # Test empty intervals
-                self.assertEqual(scheduler._calculate_active_time([]), 0.0)
+                self.assertEqual(scheduler.metrics._calculate_active_time([]), 0.0)
 
-                # Test single interval
                 intervals = [(1.0, 3.0)]
-                self.assertEqual(scheduler._calculate_active_time(intervals), 2.0)
+                self.assertEqual(
+                    scheduler.metrics._calculate_active_time(intervals), 2.0
+                )
 
-                # Test non-overlapping intervals
                 intervals = [(1.0, 2.0), (3.0, 5.0)]
-                self.assertEqual(scheduler._calculate_active_time(intervals), 3.0)
+                self.assertEqual(
+                    scheduler.metrics._calculate_active_time(intervals), 3.0
+                )
 
-                # Test overlapping intervals
                 intervals = [(1.0, 3.0), (2.0, 4.0), (5.0, 6.0)]
                 expected = 4.0  # (1.0-4.0) + (5.0-6.0) = 3.0 + 1.0 = 4.0
-                self.assertEqual(scheduler._calculate_active_time(intervals), expected)
+                self.assertEqual(
+                    scheduler.metrics._calculate_active_time(intervals), expected
+                )
 
     def test_server_metrics_calculation(self):
         """Test server metrics calculation for both scheduler types."""
@@ -154,19 +149,16 @@ class SchedulerDirectSyncUnitTests(unittest.TestCase):
             with self.subTest(scheduler=scheduler_class.__name__):
                 scheduler = scheduler_class("http://localhost:3000", True)
 
-                # Set up test data
-                scheduler.ttft_intervals = [(0.0, 1.0), (2.0, 3.0)]
-                scheduler.processing_intervals = [(0.0, 3.0), (4.0, 7.0)]
-                scheduler.total_generated_tokens = 100
-                scheduler.total_completed_requests = 2
-                scheduler._calculate_server_metrics()
-                # Calculate metrics
+                scheduler.metrics.ttft_intervals = [(0.0, 1.0), (2.0, 3.0)]
+                scheduler.metrics.processing_intervals = [(0.0, 3.0), (4.0, 7.0)]
+                scheduler.metrics.total_generated_tokens = 100
+                scheduler.metrics.total_completed_requests = 2
+                scheduler.metrics._calculate_server_metrics()
                 updated_metrics = scheduler.server_metrics()
 
-                # Verify calculations
-                expected_ttft = 2.0 / 2  # total_time / num_intervals = 1.0
-                expected_tpot = 6.0 / 100  # total_time / total_tokens = 0.06
-                expected_rps = 2 / 6.0  # num_requests / total_time = 0.333...
+                expected_ttft = 2.0 / 2
+                expected_tpot = 6.0 / 100
+                expected_rps = 2 / 6.0
 
                 self.assertAlmostEqual(
                     updated_metrics["sched_session_ttft"], expected_ttft, places=6
@@ -186,77 +178,44 @@ class SchedulerDirectIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
     def _create_completion_request(self, **kwargs) -> CompletionRequest:
         """Helper to create a completion request with defaults."""
-        gen_config_params = {}
-        top_level_params = {}
-
-        gen_config_keys = {
-            "max_new_tokens",
-            "max_tokens",
-            "temperature",
-            "top_p",
-            "seed",
-            "stop",
-            "top_k",
-            "random_seed",
-            "do_sample",
-            "repetition_penalty",
-            "frequency_penalty",
-        }
-
-        for key, value in kwargs.items():
-            if key in gen_config_keys:
-                if key == "max_tokens":
-                    gen_config_params["max_new_tokens"] = value
-                else:
-                    gen_config_params[key] = value
-            else:
-                top_level_params[key] = value
-
-        default_gen_config = {
-            "max_new_tokens": 50,
+        defaults = {
+            "model": "facebook/opt-6.7b",
+            "prompt": "Hello, how are you?",
+            "stream": False,
+            "max_tokens": 50,
             "temperature": 0.7,
             "top_p": 0.9,
-            "seed": None,
-            "stop": None,
             "top_k": 50,
             "do_sample": False,
             "repetition_penalty": 1.0,
             "frequency_penalty": 0.0,
         }
-        default_gen_config.update(gen_config_params)
-
-        default_request = {
-            "model": "facebook/opt-6.7b",
-            "prompt": "Hello, how are you?",
-            "stream": False,
-            "gen_config": GenerationConfig(**default_gen_config),
-        }
-        default_request.update(top_level_params)
-
-        return CompletionRequest(**default_request)
+        defaults.update(kwargs)
+        return CompletionRequest(**defaults)
 
     async def _setup_scheduler(self, scheduler_class):
         """Helper to set up a scheduler for testing."""
-        # Create mock args object
         mock_args = Mock()
         mock_args.model = "facebook/opt-6.7b"
         mock_args.server_host = "localhost"
         mock_args.server_port = 3000
 
-        # Set the global args in frontend module
-        frontend.args = mock_args
-
-        # Create and set scheduler instance
         engine_url = "http://localhost:3000"
-        frontend.scheduler = scheduler_class(engine_url, scheduler_metrics_enabled=True)
+        self._scheduler = scheduler_class(engine_url, scheduler_metrics_enabled=True)
 
-        # Start the scheduler
-        await frontend.scheduler.start()
+        mock_tokenizer = Mock()
+        mock_tokenizer.encode = Mock(return_value=[1, 2, 3, 4, 5])
+        mock_tokenizer.decode = Mock(return_value="test response")
+
+        request_handler.set_dependencies(self._scheduler, mock_args, mock_tokenizer)
+        set_scheduler(self._scheduler)
+
+        await self._scheduler.start()
 
     async def _teardown_scheduler(self):
         """Helper to tear down the scheduler."""
-        if frontend.scheduler and frontend.scheduler.is_running:
-            await frontend.scheduler.stop()
+        if self._scheduler and self._scheduler.is_running:
+            await self._scheduler.stop()
 
     @patch("pace.server.router.scheduler.aiohttp.ClientSession")
     async def test_scheduler_request_lifecycle(self, mock_session):
@@ -266,7 +225,6 @@ class SchedulerDirectIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 await self._setup_scheduler(scheduler_class)
 
                 try:
-                    # Setup unified mock for both scheduler types
                     MockSessionFactory.create_standard_mock(mock_session)
 
                     request_data = self._create_completion_request(
@@ -274,33 +232,22 @@ class SchedulerDirectIntegrationTests(unittest.IsolatedAsyncioTestCase):
                         max_tokens=10,
                     )
 
-                    # Mock FastAPI request
-                    mock_fastapi_request = AsyncMock()
-                    mock_fastapi_request.is_disconnected = AsyncMock(return_value=False)
-
-                    # Call the actual endpoint function
-                    response = await frontend.chat_completions(
-                        request_data, mock_fastapi_request
-                    )
+                    response = await request_handler.completions(request_data)
                     data = json.loads(response.body.decode())
 
-                    # Verify response structure
-                    self.assertIn("request_id", data)
+                    self.assertIn("id", data)
                     self.assertIn("model", data)
                     self.assertIn("choices", data)
+                    self.assertEqual(data["object"], "text_completion")
 
                     choices = data["choices"]
                     self.assertIsInstance(choices, list)
                     self.assertGreater(len(choices), 0)
 
                     choice = choices[0]
-                    self.assertIn("message", choice)
+                    self.assertIn("text", choice)
                     self.assertIn("finish_reason", choice)
-
-                    message = choice["message"]
-                    self.assertIn("role", message)
-                    self.assertIn("content", message)
-                    self.assertEqual(message["role"], "assistant")
+                    self.assertIsInstance(choice["text"], str)
                 finally:
                     await self._teardown_scheduler()
 
@@ -312,33 +259,22 @@ class SchedulerDirectIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 await self._setup_scheduler(scheduler_class)
 
                 try:
-                    # Setup unified mock for both scheduler types
-                    MockSessionFactory.create_standard_mock(
-                        mock_session, "Response", " text"
-                    )
+                    MockSessionFactory.create_standard_mock(mock_session, 101, 202)
 
                     async def submit_request(req_num):
                         request_data = self._create_completion_request(
                             prompt=f"Concurrent request {req_num}: What is AI?",
                             max_tokens=15,
                         )
-                        mock_fastapi_request = AsyncMock()
-                        mock_fastapi_request.is_disconnected = AsyncMock(
-                            return_value=False
-                        )
-                        return await frontend.chat_completions(
-                            request_data, mock_fastapi_request
-                        )
+                        return await request_handler.completions(request_data)
 
-                    # Create concurrent tasks
                     tasks = [submit_request(i) for i in range(3)]
                     results = await asyncio.gather(*tasks)
 
-                    # Verify results
                     self.assertEqual(len(results), 3)
                     for response in results:
                         data = json.loads(response.body.decode())
-                        self.assertIn("request_id", data)
+                        self.assertIn("id", data)
                         self.assertIn("choices", data)
                 finally:
                     await self._teardown_scheduler()
@@ -351,10 +287,7 @@ class SchedulerDirectIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 await self._setup_scheduler(scheduler_class)
 
                 try:
-                    # Setup unified mock for both scheduler types
-                    MockSessionFactory.create_standard_mock(
-                        mock_session, "Token", " more"
-                    )
+                    MockSessionFactory.create_standard_mock(mock_session, 300, 400)
 
                     request_data = self._create_completion_request(
                         prompt="Stream test: Count from 1 to 10",
@@ -362,17 +295,10 @@ class SchedulerDirectIntegrationTests(unittest.IsolatedAsyncioTestCase):
                         stream=True,
                     )
 
-                    mock_fastapi_request = AsyncMock()
-                    mock_fastapi_request.is_disconnected = AsyncMock(return_value=False)
+                    response = await request_handler.completions(request_data)
 
-                    response = await frontend.chat_completions(
-                        request_data, mock_fastapi_request
-                    )
-
-                    # Verify it's a StreamingResponse
                     self.assertEqual(response.media_type, "text/event-stream")
 
-                    # Collect streaming chunks
                     chunks = []
                     done_received = False
 
@@ -391,7 +317,6 @@ class SchedulerDirectIntegrationTests(unittest.IsolatedAsyncioTestCase):
                             except json.JSONDecodeError:
                                 continue
 
-                    # Verify streaming response
                     self.assertTrue(done_received, "Expected end of stream signal")
                     self.assertGreaterEqual(len(chunks), 0, "Expected streaming chunks")
                 finally:
@@ -404,13 +329,12 @@ class SchedulerDirectIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 await self._setup_scheduler(scheduler_class)
 
                 try:
-                    metrics = await frontend.get_server_wide_metrics()
+                    metrics = await request_handler.get_server_wide_metrics()
 
                     self.assertIsInstance(
                         metrics, dict, "Expected metrics as dictionary"
                     )
 
-                    # Verify metrics contain expected fields
                     for key, value in metrics.items():
                         self.assertIsInstance(
                             value,
@@ -431,12 +355,10 @@ class SchedulerDirectAsyncUnitTests(unittest.IsolatedAsyncioTestCase):
                 scheduler = scheduler_class("http://localhost:3000")
 
                 try:
-                    # Test start
                     await scheduler.start()
                     self.assertTrue(scheduler.is_running)
                     self.assertGreater(len(scheduler.processing_tasks), 0)
 
-                    # Test stop
                     await scheduler.stop()
                     self.assertFalse(scheduler.is_running)
                 finally:
@@ -449,11 +371,9 @@ class SchedulerDirectAsyncUnitTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(scheduler=scheduler_class.__name__):
                 scheduler = scheduler_class("http://localhost:3000")
 
-                # Test non-existent request
                 status = await scheduler.get_request_status("non-existent")
                 self.assertIsNone(status)
 
-                # Test existing request
                 mock_req = Mock()
                 mock_req.request_id = "test-456"
                 mock_req.status = RequestStatus.PROCESSING
@@ -473,7 +393,6 @@ class SchedulerDirectAsyncUnitTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(scheduler=scheduler_class.__name__):
                 scheduler = scheduler_class("http://localhost:3000")
 
-                # Create mock request with stats
                 mock_req = Mock()
                 mock_req.request_id = "cleanup-test"
                 mock_req.req_stats = {
@@ -484,18 +403,14 @@ class SchedulerDirectAsyncUnitTests(unittest.IsolatedAsyncioTestCase):
                     "end_wait_time": 1.5,
                 }
 
-                # Add to active requests
                 scheduler.active_requests["cleanup-test"] = mock_req
                 self.assertEqual(scheduler.get_active_requests_count(), 1)
 
-                # Cleanup request
                 await scheduler._cleanup_request(mock_req)
 
-                # Verify cleanup
                 self.assertEqual(scheduler.get_active_requests_count(), 0)
                 self.assertNotIn("cleanup-test", scheduler.active_requests)
 
-                # Verify stats were calculated
                 self.assertIn("TTFT", mock_req.req_stats)
                 self.assertIn("TPOT", mock_req.req_stats)
                 self.assertEqual(mock_req.req_stats["TTFT"], 1.0)
@@ -504,21 +419,17 @@ class SchedulerDirectAsyncUnitTests(unittest.IsolatedAsyncioTestCase):
     async def test_decode_queue_management(self):
         """Test decode queue management specific to PrefillFirstScheduler (decode_queues per worker)."""
         scheduler = PrefillFirstScheduler("http://localhost:3000")
-        # Single engine: use worker 0's decode queue
         worker_id = 0
 
-        # Create mock request
         mock_req = Mock()
         mock_req.request_id = "decode-test"
         mock_req.status = RequestStatus.PROCESSING
         mock_req.req_sampling_params = Mock()
         mock_req.req_sampling_params.max_new_tokens = 100
 
-        # Add to decode queue for worker 0
         scheduler.decode_queues[worker_id]["decode-test"] = mock_req
         self.assertEqual(len(scheduler.decode_queues[worker_id]), 1)
 
-        # Remove from decode queue
         del scheduler.decode_queues[worker_id]["decode-test"]
         self.assertEqual(len(scheduler.decode_queues[worker_id]), 0)
 
@@ -549,14 +460,12 @@ class MultiInstanceSchedulerTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(scheduler.engine_urls, self.URLS)
                 self.assertEqual(scheduler.engine_url, self.URLS[0])
 
-                # get_next_engine_url should cycle 0 -> 1 -> 2 -> 0 -> 1 -> 2
                 for cycle in range(2):
                     for idx in range(3):
                         self.assertEqual(
                             scheduler.get_next_engine_url(), self.URLS[idx]
                         )
 
-                # Reset index so submit_request starts from URL 0
                 scheduler.current_engine_index = 0
                 for i in range(6):
                     req = self._make_mock_request(f"rr-{i}")
@@ -615,7 +524,6 @@ class MultiInstanceSchedulerTests(unittest.IsolatedAsyncioTestCase):
 
         launcher.main()
 
-        # 3 engine Popen calls + 1 router Popen call
         self.assertEqual(mock_popen.call_count, 4)
 
         engine_ports = []
@@ -634,7 +542,6 @@ class MultiInstanceSchedulerTests(unittest.IsolatedAsyncioTestCase):
         ni_idx = router_cmd.index("--num_engine_instances") + 1
         self.assertEqual(router_cmd[ni_idx], "3")
 
-        # KeyboardInterrupt should trigger terminate on all 4 procs
         self.assertTrue(mock_proc.terminate.called)
 
 

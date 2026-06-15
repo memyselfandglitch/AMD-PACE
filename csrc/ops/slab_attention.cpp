@@ -182,6 +182,16 @@ TORCH_LIBRARY_FRAGMENT(pace, m) {
       .def("get_free_block_count", &Pool::get_free_block_count)
       .def("cache_update", checked_cache_update)
       .def("attention", checked_attention);
+  // Pick the largest SlabPool block_size (from {32, 64, 128, 256}) whose
+  // K+V working set for `(num_kv_heads, head_dim)` bf16 fits in 1/4 of
+  // L2. Geometry-only -- no SlabPool state -- so it lives as a free op
+  // alongside the class binding. Schema is registered with an inline
+  // implementation (CompositeImplicitAutograd) because the op takes
+  // only ints (no tensors), and the dispatcher cannot pick a backend
+  // off scalar args alone.
+  m.def(
+      "slab_autotune_block_size(int num_kv_heads, int head_dim) -> int",
+      pace::kernels::autotune_block_size);
 }
 
 } // namespace

@@ -57,7 +57,7 @@ class LlamaAttention(nn.Module):
         self.num_key_value_heads = config.num_key_value_heads
         self.num_key_value_groups = self.num_heads // self.num_key_value_heads
         self.max_position_embeddings = config.max_position_embeddings
-        self.rope_theta = config.rope_theta
+        self.rope_theta = config.rope_parameters["rope_theta"]
 
         phi_model = config.architectures[0] == "Phi3ForCausalLM"
         bias = False if phi_model else config.attention_bias
@@ -191,7 +191,7 @@ class LlamaModel(nn.Module):
             rope_scaling=config.rope_scaling,
             rotary_dim=config.hidden_size // config.num_attention_heads,
             max_position_embeddings=config.max_position_embeddings,
-            rope_theta=config.rope_theta,
+            rope_theta=config.rope_parameters["rope_theta"],
             partial_rotary_factor=partial_rotary_factor,
             backend_impl=opconfig.rope,
             original_max_position_embeddings=getattr(

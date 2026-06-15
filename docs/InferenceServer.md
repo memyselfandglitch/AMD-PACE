@@ -18,7 +18,7 @@ Client Requests
  /metrics (Prometheus)
 ```
 
-- **Router**: API surface for completions. Accepts `/v1/completions` requests, schedules them across engine instances, and streams responses back. OpenAI-compatible API compliance is planned for a future release.
+- **Router**: API surface for completions. Accepts `/v1/completions` requests, schedules them across engine instances, and streams responses back.
 - **Engine(s)**: Each engine instance loads the model, manages KV cache, and executes prefill/decode steps. Engines are pinned to specific NUMA nodes/cores for optimal performance.
 - **Launcher**: Orchestrates startup of all engine instances and the router via a single `pace-server` command.
 
@@ -129,8 +129,7 @@ pace-server \
 ### Completions
 
 Send text generation requests. Supports both streaming and non-streaming modes.
-
-> **Note**: The current completions API uses a custom request/response format catered to PACE's needs. OpenAI-compatible API compliance will be introduced in a future release.
+The API follows the [OpenAI v1/completions](https://platform.openai.com/docs/api-reference/completions) specification.
 
 **POST** `/v1/completions`
 
@@ -138,31 +137,23 @@ Send text generation requests. Supports both streaming and non-streaming modes.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `model` | `str` | `"facebook/opt-6.7b"` | Model name (must match `--server_model`) |
-| `prompt` | `str` or `List[str]` | *required* | Input text(s) for generation |
+| `model` | `str` | *required* | Model name (must match `--server_model`) |
+| `prompt` | `str`, `List[str]`, `List[int]`, or `List[List[int]]` | *required* | Input text(s) or token ID(s) for generation |
 | `stream` | `bool` | `false` | Enable Server-Sent Events streaming |
-| `gen_config` | `GenerationConfig` | `null` | Generation parameters (see below) |
-| `mlperf_mode` | `bool` | `false` | Return raw token IDs instead of text |
-
-**GenerationConfig parameters:**
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `max_new_tokens` | `int` | `None` | Maximum tokens to generate |
-| `min_new_tokens` | `int` | `None` | Minimum tokens before stopping |
-| `temperature` | `float` | `None` | Sampling temperature (0 = greedy) |
+| `max_tokens` | `int` | `16` | Maximum tokens to generate |
+| `temperature` | `float` | `None` | Sampling temperature (0 = greedy, >0 = random) |
 | `top_p` | `float` | `None` | Nucleus sampling threshold |
-| `top_k` | `int` | `None` | Top-k sampling |
-| `do_sample` | `bool` | `None` | Enable sampling (False = greedy) |
+| `top_k` | `int` | `None` | Top-k sampling (PACE extension) |
 | `seed` | `int` | `None` | Random seed for reproducibility |
-| `stop_strings` | `str` or `List[str]` | `None` | Stop generation on these strings |
-| `ignore_eos` | `bool` | `None` | Continue past EOS token |
-| `repetition_penalty` | `float` | `None` | Penalty for repeated tokens |
-| `frequency_penalty` | `float` | `None` | Penalty based on token frequency |
+| `stop` | `str` or `List[str]` | `None` | Stop generation on these strings |
+| `echo` | `bool` | `false` | Prepend prompt text to output |
+| `suffix` | `str` | `None` | Append this text after generated output |
+| `n` | `int` | `1` | Number of completions (only 1 supported) |
+| `frequency_penalty` | `float` | `0.0` | Penalty based on token frequency |
+| `presence_penalty` | `float` | `0.0` | Accepted but not applied |
+| `mlperf_mode` | `bool` | `false` | Return raw token IDs instead of text (PACE extension) |
 
-> **Note**: All `gen_config` parameters default to `None`. When not specified, the model's own defaults from its HuggingFace configuration are used.
-
-> `max_tokens` is accepted as an alias for `max_new_tokens`, and `stop` as an alias for `stop_strings`. Both forms are normalized internally. `num_beams` is explicitly rejected (beam search not supported).
+> **Note**: When `temperature` is `None` or `0`, greedy decoding is used. When `temperature > 0`, random sampling is enabled automatically.
 
 **Non-streaming example:**
 
@@ -173,29 +164,32 @@ curl -sS -X POST "http://localhost:8080/v1/completions" \
     "model": "meta-llama/Llama-3.1-8B-Instruct",
     "prompt": "Explain quantum computing in simple terms.",
     "stream": false,
-    "gen_config": {
-      "max_new_tokens": 100,
-      "temperature": 0.7,
-      "do_sample": true
-    }
+    "max_tokens": 100,
+    "temperature": 0.7
   }' | jq
 ```
 
-**Non-streaming response format:**
+**Non-streaming response format** (OpenAI-compatible `text_completion`):
 
 ```json
 {
-  "request_id": "a1b2c3d4-...",
+  "id": "cmpl-a1b2c3d4-...",
+  "object": "text_completion",
+  "created": 1714400000,
   "model": "meta-llama/Llama-3.1-8B-Instruct",
   "choices": [
     {
-      "message": {
-        "role": "assistant",
-        "content": "Quantum computing uses quantum bits..."
-      },
+      "index": 0,
+      "text": "Quantum computing uses quantum bits...",
+      "logprobs": null,
       "finish_reason": "stop"
     }
-  ]
+  ],
+  "usage": {
+    "prompt_tokens": 8,
+    "completion_tokens": 42,
+    "total_tokens": 50
+  }
 }
 ```
 
@@ -209,27 +203,25 @@ curl -sS -X POST "http://localhost:8080/v1/completions" \
     "model": "meta-llama/Llama-3.1-8B-Instruct",
     "prompt": "Write a haiku about CPU inference.",
     "stream": true,
-    "gen_config": {
-      "max_new_tokens": 50,
-      "temperature": 0,
-      "do_sample": false
-    }
+    "max_tokens": 50,
+    "temperature": 0
   }' --no-buffer
 ```
 
 **Streaming response format** (Server-Sent Events):
 
 ```
-data: {"choices": [{"delta": {"content": "Silicon"}}]}
+data: {"id":"cmpl-...","object":"text_completion","choices":[{"index":0,"text":"Silicon"}]}
 
-data: {"choices": [{"delta": {"content": " threads"}}]}
+data: {"id":"cmpl-...","object":"text_completion","choices":[{"index":0,"text":" threads"}]}
 
-data: {"choices": [{"delta": {"content": " weave"}}]}
+data: {"id":"cmpl-...","object":"text_completion","choices":[{"index":0,"text":" weave"}]}
 
 data: [DONE]
 ```
 
-Streaming responses include an `X-Request-ID` header for tracking. Non-streaming responses return the `request_id` in the JSON body.
+Every response includes an `id` field (e.g. `cmpl-a1b2c3d4-...`) in the JSON body following the OpenAI format.
+Streaming responses also include an `X-Request-ID` HTTP header: for single-prompt requests this is the per-prompt request ID; for multi-prompt requests it is the shared group ID that ties all `choices[].index` entries together.
 
 ### Health Check
 
@@ -479,25 +471,22 @@ curl -sS -X POST "http://localhost:8080/v1/completions" \
     "model": "Qwen/Qwen2.5-7B-Instruct",
     "prompt": "Explain how speculative decoding works:",
     "stream": true,
-    "gen_config": {
-      "max_new_tokens": 200,
-      "temperature": 0,
-      "do_sample": false
-    }
+    "max_tokens": 200,
+    "temperature": 0
   }' --no-buffer
 ```
 
 ### PARD Output Behavior
 
-With speculative decoding, each decode step can produce **multiple tokens** (all accepted speculative tokens). In streaming mode, these appear as a single chunk containing the concatenated decoded text of all accepted tokens. The `num_tokens_generated` field in engine responses tracks how many tokens were produced in each step.
+With speculative decoding, each decode step can produce **multiple tokens** (all accepted speculative tokens). In streaming mode, all accepted tokens from a single decode step are decoded together and emitted as a single SSE chunk:
 
 ```
-data: {"choices": [{"delta": {"content": "Speculative decoding is a technique"}}]}
-data: {"choices": [{"delta": {"content": " that uses a smaller"}}]}
+data: {"id":"cmpl-...","object":"text_completion","choices":[{"index":0,"text":"Speculative decoding is a technique"}]}
+data: {"id":"cmpl-...","object":"text_completion","choices":[{"index":0,"text":" that uses a smaller"}]}
 data: [DONE]
 ```
 
-> Each chunk may contain multiple tokens when the draft model's predictions are accepted.
+> Each chunk may contain multiple tokens' worth of text when the draft model's predictions are accepted.
 
 ### Important Notes
 

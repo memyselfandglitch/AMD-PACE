@@ -212,7 +212,7 @@ class Qwen2Model(nn.Module):
             rope_scaling=config.rope_scaling,
             rotary_dim=config.hidden_size // config.num_attention_heads,
             max_position_embeddings=config.max_position_embeddings,
-            rope_theta=config.rope_theta,
+            rope_theta=config.rope_parameters["rope_theta"],
             backend_impl=opconfig.rope,
         )
 

@@ -60,7 +60,7 @@ torch_dtype = torch.bfloat16
 
 tokenizer = AutoTokenizer.from_pretrained(model_name)
 tokenizer.padding_side = "left"
-inputs_encoded = tokenizer.batch_encode_plus(["Input.."], return_tensors="pt", padding="longest")
+inputs_encoded = tokenizer(["Input.."], return_tensors="pt", padding="longest")
 
 pace_model = LLMModel(model_name, dtype=torch_dtype)
 sampling_config = SamplingConfig(

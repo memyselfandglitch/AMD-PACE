@@ -17,6 +17,7 @@ import uvicorn
 import requests
 import signal
 import multiprocessing as mp
+from transformers import AutoTokenizer
 from pace.server.engine.frontend import app
 from pace.utils.logging import suppress_logging_cls
 from pace.utils.worker import Worker
@@ -51,6 +52,8 @@ def set_log_level(level: str = "none"):
 @suppress_logging_cls()
 class InferenceServerTests(unittest.IsolatedAsyncioTestCase):
 
+    MODEL_ID = "facebook/opt-6.7b"
+
     @classmethod
     def setUpClass(cls):
         cls.ENGINE_PROC = Worker(
@@ -65,6 +68,11 @@ class InferenceServerTests(unittest.IsolatedAsyncioTestCase):
         time.sleep(5)
         if not _server_available():
             raise unittest.SkipTest(f"Server not reachable at {BASE_URL}")
+        cls._tokenizer = AutoTokenizer.from_pretrained(cls.MODEL_ID)
+
+    def _encode(self, text: str):
+        """Tokenize text to a list of token IDs for the engine."""
+        return self._tokenizer.encode(text)
 
     @classmethod
     def tearDownClass(cls):
@@ -79,10 +87,9 @@ class InferenceServerTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(len(data) >= 0)
 
     def test_02_config_server(self):
-        # Adjust operatorConfig fields to exactly match OperatorConfig in server.py
         payload = {
             "modelConfig": {
-                "modelId": "facebook/opt-6.7b",
+                "modelId": self.MODEL_ID,
                 "dataType": "bf16",
                 "attnType": "dynamic",
             },
@@ -114,7 +121,7 @@ class InferenceServerTests(unittest.IsolatedAsyncioTestCase):
             req_id = r.get("req_id")
             self.assertIsNotNone(req_id)
             result_entry = r.get("result", {}).get(req_id, {})
-            self.assertIn("output", result_entry)
+            self.assertIn("token_ids", result_entry)
         return data
 
     def test_03_prefill_basic(self):
@@ -122,7 +129,7 @@ class InferenceServerTests(unittest.IsolatedAsyncioTestCase):
         batch = [
             {
                 "is_prefill": True,
-                "prompt": "Are you listening. Once upon a time in Mexico",
+                "prompt": self._encode("Are you listening. Once upon a time in Mexico"),
                 "req_id": str(uuid.uuid4()),
                 "generation_config": {
                     "max_new_tokens": 50,
@@ -132,12 +139,11 @@ class InferenceServerTests(unittest.IsolatedAsyncioTestCase):
                     "repetition_penalty": 1.0,
                     "do_sample": False,
                     "seed": 123,
-                    "stop_strings": ["\n\n"],
                 },
             },
             {
                 "is_prefill": True,
-                "prompt": "AMD Hello, how are you? What is your status?",
+                "prompt": self._encode("AMD Hello, how are you? What is your status?"),
                 "req_id": str(uuid.uuid4()),
                 "generation_config": {
                     "max_new_tokens": 30,
@@ -147,7 +153,6 @@ class InferenceServerTests(unittest.IsolatedAsyncioTestCase):
                     "repetition_penalty": 1.0,
                     "do_sample": False,
                     "seed": 456,
-                    "stop_strings": ["\n\n"],
                 },
             },
         ]
@@ -158,7 +163,9 @@ class InferenceServerTests(unittest.IsolatedAsyncioTestCase):
         batch = [
             {
                 "is_prefill": True,
-                "prompt": "Explain the concept of machine learning in simple terms",
+                "prompt": self._encode(
+                    "Explain the concept of machine learning in simple terms"
+                ),
                 "req_id": str(uuid.uuid4()),
                 "generation_config": {
                     "max_new_tokens": 75,
@@ -168,12 +175,13 @@ class InferenceServerTests(unittest.IsolatedAsyncioTestCase):
                     "repetition_penalty": 1.1,
                     "do_sample": True,
                     "seed": 789,
-                    "stop_strings": ["\n\n", "###"],
                 },
             },
             {
                 "is_prefill": True,
-                "prompt": "What are the benefits of using Python for data science?",
+                "prompt": self._encode(
+                    "What are the benefits of using Python for data science?"
+                ),
                 "req_id": str(uuid.uuid4()),
                 "generation_config": {
                     "max_new_tokens": 60,
@@ -183,12 +191,13 @@ class InferenceServerTests(unittest.IsolatedAsyncioTestCase):
                     "repetition_penalty": 1.0,
                     "do_sample": True,
                     "seed": 101112,
-                    "stop_strings": ["\n\n"],
                 },
             },
             {
                 "is_prefill": True,
-                "prompt": "How does artificial intelligence impact society?",
+                "prompt": self._encode(
+                    "How does artificial intelligence impact society?"
+                ),
                 "req_id": str(uuid.uuid4()),
                 "generation_config": {
                     "max_new_tokens": 80,
@@ -198,7 +207,6 @@ class InferenceServerTests(unittest.IsolatedAsyncioTestCase):
                     "repetition_penalty": 1.05,
                     "do_sample": False,
                     "seed": 131415,
-                    "stop_strings": ["\n\n", "However,"],
                 },
             },
         ]
@@ -209,7 +217,7 @@ class InferenceServerTests(unittest.IsolatedAsyncioTestCase):
         batch = [
             {
                 "is_prefill": True,
-                "prompt": "Write a short poem about the ocean",
+                "prompt": self._encode("Write a short poem about the ocean"),
                 "req_id": str(uuid.uuid4()),
                 "generation_config": {
                     "max_new_tokens": 40,
@@ -219,12 +227,11 @@ class InferenceServerTests(unittest.IsolatedAsyncioTestCase):
                     "repetition_penalty": 1.2,
                     "do_sample": True,
                     "seed": 161718,
-                    "stop_strings": ["\n\n\n", "THE END"],
                 },
             },
             {
                 "is_prefill": True,
-                "prompt": "Describe a futuristic city in the year 2150",
+                "prompt": self._encode("Describe a futuristic city in the year 2150"),
                 "req_id": str(uuid.uuid4()),
                 "generation_config": {
                     "max_new_tokens": 90,
@@ -234,7 +241,6 @@ class InferenceServerTests(unittest.IsolatedAsyncioTestCase):
                     "repetition_penalty": 1.15,
                     "do_sample": True,
                     "seed": 192021,
-                    "stop_strings": ["\n\n", "In conclusion"],
                 },
             },
         ]
@@ -245,7 +251,7 @@ class InferenceServerTests(unittest.IsolatedAsyncioTestCase):
         batch = [
             {
                 "is_prefill": True,
-                "prompt": "Hello! Can you help me plan a weekend trip?",
+                "prompt": self._encode("Hello! Can you help me plan a weekend trip?"),
                 "req_id": str(uuid.uuid4()),
                 "generation_config": {
                     "max_new_tokens": 55,
@@ -255,12 +261,13 @@ class InferenceServerTests(unittest.IsolatedAsyncioTestCase):
                     "repetition_penalty": 1.0,
                     "do_sample": True,
                     "seed": 222324,
-                    "stop_strings": ["\n\n", "Is there anything else"],
                 },
             },
             {
                 "is_prefill": True,
-                "prompt": "What's the weather like today? I'm thinking of going for a walk.",
+                "prompt": self._encode(
+                    "What's the weather like today? I'm thinking of going for a walk."
+                ),
                 "req_id": str(uuid.uuid4()),
                 "generation_config": {
                     "max_new_tokens": 35,
@@ -270,12 +277,11 @@ class InferenceServerTests(unittest.IsolatedAsyncioTestCase):
                     "repetition_penalty": 1.05,
                     "do_sample": False,
                     "seed": 252627,
-                    "stop_strings": ["\n\n"],
                 },
             },
             {
                 "is_prefill": True,
-                "prompt": "Can you recommend a good book to read?",
+                "prompt": self._encode("Can you recommend a good book to read?"),
                 "req_id": str(uuid.uuid4()),
                 "generation_config": {
                     "max_new_tokens": 65,
@@ -285,12 +291,11 @@ class InferenceServerTests(unittest.IsolatedAsyncioTestCase):
                     "repetition_penalty": 1.1,
                     "do_sample": True,
                     "seed": 282930,
-                    "stop_strings": ["\n\n", "Happy reading!"],
                 },
             },
             {
                 "is_prefill": True,
-                "prompt": "Tell me a fun fact about space exploration",
+                "prompt": self._encode("Tell me a fun fact about space exploration"),
                 "req_id": str(uuid.uuid4()),
                 "generation_config": {
                     "max_new_tokens": 45,
@@ -300,7 +305,6 @@ class InferenceServerTests(unittest.IsolatedAsyncioTestCase):
                     "repetition_penalty": 1.0,
                     "do_sample": True,
                     "seed": 313233,
-                    "stop_strings": ["\n\n", "Amazing, right?"],
                 },
             },
         ]
@@ -311,7 +315,9 @@ class InferenceServerTests(unittest.IsolatedAsyncioTestCase):
         batch = [
             {
                 "is_prefill": True,
-                "prompt": "Write a Python function to calculate fibonacci numbers",
+                "prompt": self._encode(
+                    "Write a Python function to calculate fibonacci numbers"
+                ),
                 "req_id": str(uuid.uuid4()),
                 "generation_config": {
                     "max_new_tokens": 70,
@@ -321,12 +327,13 @@ class InferenceServerTests(unittest.IsolatedAsyncioTestCase):
                     "repetition_penalty": 1.0,
                     "do_sample": False,
                     "seed": 343536,
-                    "stop_strings": ["\n\n", "```"],
                 },
             },
             {
                 "is_prefill": True,
-                "prompt": "Explain the difference between a list and a dictionary in Python",
+                "prompt": self._encode(
+                    "Explain the difference between a list and a dictionary in Python"
+                ),
                 "req_id": str(uuid.uuid4()),
                 "generation_config": {
                     "max_new_tokens": 85,
@@ -336,12 +343,13 @@ class InferenceServerTests(unittest.IsolatedAsyncioTestCase):
                     "repetition_penalty": 1.05,
                     "do_sample": True,
                     "seed": 373839,
-                    "stop_strings": ["\n\n", "In summary"],
                 },
             },
             {
                 "is_prefill": True,
-                "prompt": "What are the best practices for writing clean code?",
+                "prompt": self._encode(
+                    "What are the best practices for writing clean code?"
+                ),
                 "req_id": str(uuid.uuid4()),
                 "generation_config": {
                     "max_new_tokens": 95,
@@ -351,7 +359,6 @@ class InferenceServerTests(unittest.IsolatedAsyncioTestCase):
                     "repetition_penalty": 1.1,
                     "do_sample": True,
                     "seed": 404142,
-                    "stop_strings": ["\n\n", "These practices"],
                 },
             },
         ]
@@ -469,11 +476,8 @@ class InferenceServerTests(unittest.IsolatedAsyncioTestCase):
             )
             self.assertTrue(len(seq["state"]) > 0, "Sequence state should not be empty")
 
-            # Optional: verify other common fields if present
-            if "prompt" in seq:
-                self.assertIsInstance(seq["prompt"], str)
-            if "input_length" in seq:
-                self.assertIsInstance(seq["input_length"], int)
+            if "total_tokens" in seq:
+                self.assertIsInstance(seq["total_tokens"], int)
             if "max_new_tokens" in seq:
                 self.assertIsInstance(seq["max_new_tokens"], int)
 

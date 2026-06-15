@@ -121,7 +121,7 @@ class BenchMarkDataGenerator(Generator):
                     for q in data_val
                 ]
 
-            input_encoded = tokenizer.batch_encode_plus(
+            input_encoded = tokenizer(
                 data_val,
                 padding="max_length",
                 truncation=True,

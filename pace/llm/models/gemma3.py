@@ -275,25 +275,22 @@ class Gemma3Model(nn.Module):
         head_dim = getattr(
             config, "head_dim", config.hidden_size // config.num_attention_heads
         )
-        rope_theta = getattr(config, "rope_theta", 1000000.0)
-        rope_scaling = getattr(config, "rope_scaling", None)
-
-        # Global attention RoPE (uses rope_theta, typically 1000000.0)
+        # Gemma3 nests RoPE params per attention type under config.rope_parameters.
+        # Global attention RoPE (typically rope_theta=1000000.0).
         self.rotary_emb = RotaryEmbedding(
-            rope_scaling=rope_scaling,
+            rope_scaling=config.rope_scaling["full_attention"],
             rotary_dim=head_dim,
             max_position_embeddings=config.max_position_embeddings,
-            rope_theta=rope_theta,
+            rope_theta=config.rope_parameters["full_attention"]["rope_theta"],
             backend_impl=opconfig.rope,
         )
 
-        # Local/sliding window attention RoPE (uses rope_local_base_freq, typically 10000.0)
-        rope_local_base_freq = getattr(config, "rope_local_base_freq", 10000.0)
+        # Local/sliding window attention RoPE (typically rope_theta=10000.0).
         self.rotary_emb_local = RotaryEmbedding(
             rope_scaling=None,  # Local RoPE doesn't use scaling
             rotary_dim=head_dim,
             max_position_embeddings=config.max_position_embeddings,
-            rope_theta=rope_local_base_freq,
+            rope_theta=config.rope_parameters["sliding_attention"]["rope_theta"],
             backend_impl=opconfig.rope,
         )
 

@@ -9,9 +9,11 @@ PagedAttentionBackend: receives pre-built PagedAttentionMetadata via kwargs,
 flattens QKV from BSNH to [T,N,H], and calls the vLLM C++ free functions
 (reshape_and_cache + paged_attention_with_kv_cache) directly.
 
-Metadata is built ONCE per step in the generator/server and passed through
-the model to all layers via the paged_attn_metadata kwarg — zero per-layer
-overhead for metadata building.
+Shared metadata (slot_mapping, block_table, seq_lens, query_start_loc) is
+built once per step in the generator/server.  The scheduler_metadata (work
+item partitioning) is built per-layer here, so each layer's sliding_window
+is correctly accounted for — matching the vLLM approach and avoiding empty
+KV splits that would corrupt output for models with attention sinks.
 """
 
 import math
@@ -20,6 +22,7 @@ from typing import Optional
 import torch
 
 from pace.llm.attention.base import AttentionBackend
+from pace.llm.attention.paged.ops import get_paged_attention_scheduler_metadata
 
 
 class PagedAttentionBackend(AttentionBackend):
@@ -84,21 +87,29 @@ class PagedAttentionBackend(AttentionBackend):
             paged_attn_metadata.isa,
         )
 
-        # Run paged attention.
-        # TODO: scheduler_metadata is built with sliding_window_size=-1 (full
-        # range) because it is shared across all layers, while sliding_window
-        # varies per layer (e.g. Gemma3 local vs global).  The kernel still
-        # enforces the window via sw_left/sw_right, but the scheduler may
-        # over-partition work for local-attention layers.  Consider per-layer
-        # scheduler metadata if profiling shows this as a bottleneck.
         sw = self.sliding_window
         sw_left = sw - 1 if sw > 0 else -1
         sw_right = 0
 
-        # Prepare sinks: convert to bf16 and pad every call. The C++ kernel
-        # requires bf16 and vectorizes in chunks of 16. We avoid mutating
-        # self.sinks here so that any nn.Parameter stored there remains
-        # registered with the module.
+        # Build scheduler metadata per-layer with the correct sliding window.
+        # This matches the vLLM approach: the scheduler partitions KV work
+        # items using the layer's actual sliding_window_size, so it never
+        # creates splits outside the window — avoiding empty KV splits that
+        # would corrupt output for models with attention sinks (e.g. GPT-OSS).
+        scheduler_metadata = get_paged_attention_scheduler_metadata(
+            num_reqs=paged_attn_metadata.seq_lens.shape[0],
+            num_heads=self.num_heads,
+            num_kv_heads=self.num_kv_heads,
+            head_dim=self.head_dim,
+            seq_lens=paged_attn_metadata.seq_lens,
+            dtype=Q.dtype,
+            query_start_loc=paged_attn_metadata.query_start_loc,
+            causal=paged_attn_metadata.causal,
+            sliding_window_size=self.sliding_window if self.sliding_window > 0 else -1,
+            isa=paged_attn_metadata.isa,
+            enable_kv_split=True,
+        )
+
         s_aux = self.sinks
         if s_aux is not None:
             if s_aux.dtype != torch.bfloat16:
@@ -123,7 +134,7 @@ class PagedAttentionBackend(AttentionBackend):
             sw_right,
             paged_attn_metadata.block_table,
             0.0,
-            paged_attn_metadata.scheduler_metadata,
+            scheduler_metadata,
             s_aux,
         )
 

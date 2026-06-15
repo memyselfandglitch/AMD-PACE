@@ -79,43 +79,36 @@ class Sequence:
     def __init__(
         self,
         req_id: uuid.UUID,
-        input_request: str,
-        tokenizer: Any,
+        input_token_ids: List[int],
         model_config: Any,
         cache_backend,
         _prepare_sampling_config: Callable,
         genConfig: Optional[Dict[str, Any]] = None,
-        mlperf_mode: bool = False,
         spec_headroom: int = 0,
+        tokenizer=None,
     ):
         """
         Initializes a new Sequence instance.
 
         Args:
             req_id (uuid.UUID): Unique identifier for this request.
-            input_request (str): The input data for the sequence.
-            tokenizer: The tokenizer instance.
+            input_token_ids (List[int]): Pre-tokenized prompt as token IDs.
             model_config: The model configuration.
             cache_backend: The cache backend (ContiguousCache or PagedCache).
+            _prepare_sampling_config: Callable to prepare sampling config.
             genConfig (Optional[Dict]): Generation configuration parameters.
-            mlperf_mode (bool): If True, skip text decoding (only return token_ids)
-                               for MLPerf Server scenario.
+            spec_headroom (int): Extra headroom for speculative decoding KV cache.
+            tokenizer: Optional tokenizer for stop-string matching.
         """
-        if not isinstance(input_request, (str, list)):
-            raise TypeError("input_request must be a list of strings.")
+        if not isinstance(input_token_ids, list):
+            raise TypeError("input_token_ids must be a list of integers.")
 
         self.id: uuid.UUID = req_id
-        self.input_request: str = input_request
+        self.input_token_ids: List[int] = input_token_ids
         self.state: State = State.PREFILL
-        self.mlperf_mode: bool = mlperf_mode  # MLPerf Server: response token_id only
 
-        try:
-            self.input_encoded = tokenizer.encode_plus(
-                self.input_request, return_tensors="pt", padding="longest"
-            )
-        except Exception as e:
-            PACE_INFO(f"[ERROR] Failed to encode input: {e}")
-            raise
+        input_ids_tensor = torch.tensor([input_token_ids], dtype=torch.long)
+        input_len = input_ids_tensor.size(-1)
 
         try:
             user_sampling_config = (
@@ -124,7 +117,7 @@ class Sequence:
 
             self.sampling_config: SamplingConfig = _prepare_sampling_config(
                 user_sampling_config=user_sampling_config,
-                initial_decoder_input_length=self.input_encoded.input_ids.shape[-1],
+                initial_decoder_input_length=input_len,
                 model_max_new_tokens=model_config.max_position_embeddings,
             )
         except Exception as e:
@@ -133,20 +126,23 @@ class Sequence:
             traceback.print_exc()
             raise
 
-        self.output_str = []
-
-        input_len = self.input_encoded.input_ids.size(-1)
         max_seq_length = self.sampling_config.max_new_tokens + input_len
 
-        # Pre-allocate token buffer to avoid torch.cat on every decode step.
         self._token_buffer = torch.zeros(
             1,
             max_seq_length,
             dtype=torch.long,
-            device=self.input_encoded.input_ids.device,
+            device=input_ids_tensor.device,
         )
-        self._token_buffer[0, :input_len] = self.input_encoded.input_ids[0]
+        self._token_buffer[0, :input_len] = input_ids_tensor[0]
         self._token_len = input_len
+
+        class _InputEncoded:
+            """Lightweight stand-in for the tokenizer BatchEncoding."""
+
+            pass
+
+        self.input_encoded = _InputEncoded()
         self.input_encoded.input_ids = self._token_buffer[:, :input_len]
 
         PACE_INFO(f"Sampling config: {self.sampling_config}")
@@ -163,10 +159,8 @@ class Sequence:
             self.sampling_config, self.input_encoded.input_ids, tokenizer
         )
 
-        # Position tracking
         self.num_computed_tokens = 0
 
-        # Draft-model state (populated during prefill when spec decoding is enabled)
         self.draft_kv_cache_manager: Optional[KVCacheManager] = None
         self.draft_num_computed_tokens: Optional[torch.Tensor] = None
 
@@ -212,7 +206,7 @@ class Sequence:
             f"Sequence:\n"
             f"  ID     : {self.id}\n"
             f"  State  : {self.state.name}\n"
-            f"  Request: {''.join(self.input_request)}"
+            f"  Tokens : {self._token_len}"
         )
 
     def __repr__(self) -> str:
@@ -232,7 +226,6 @@ class ModelExecutor:
         self.prefill_queue: Dict[uuid.UUID, Sequence] = {}
         self.decode_queue: Dict[uuid.UUID, Sequence] = {}
         self._all_greedy: bool = True  # empty queue is trivially all-greedy
-        self._all_mlperf: bool = True  # empty queue is trivially all-mlperf
 
     def add_to_prefill_queue(self, reqs: List[Sequence]) -> None:
         """
@@ -252,7 +245,6 @@ class ModelExecutor:
         self.prefill_queue.pop(req.id, None)
         self.decode_queue[req.id] = req
         self._all_greedy = self._all_greedy and req.sampler._greedy_fast_path
-        self._all_mlperf = self._all_mlperf and req.mlperf_mode
 
     @staticmethod
     def batch_input_ids(input_ids_list, pad_token=0):
@@ -375,12 +367,14 @@ class ModelExecutor:
         chunked: bool = False,
         chunk_sizes: List[Tuple[int, int]] = [(0, -1)],
     ) -> Any:
-        """Run prefill step for the given prompts. Creates Sequence from request_data (same as mlperf_scripts)."""
-        if self._model is None or self._tokenizer is None:
-            raise RuntimeError(
-                "Model and tokenizer must be loaded before running prefill."
-            )
-        prompt = request_data.prompt
+        """Run prefill step for pre-tokenized prompts (List[int]).
+
+        The router is responsible for all tokenization/detokenization.
+        The engine only works with token IDs.
+        """
+        if self._model is None:
+            raise RuntimeError("Model must be loaded before running prefill.")
+        prompt_token_ids = request_data.prompt
         reqID = request_data.request_id
         generation_config = request_data.gen_config
 
@@ -393,28 +387,25 @@ class ModelExecutor:
 
         PACE_DEBUG(f"Config: {generation_config}")
 
-        # Compute spec headroom for KV cache sizing (same as generator)
         spec_headroom = 0
         if self._spec_decoder is not None:
             spec_headroom = self._spec_decoder.num_speculative_tokens + 1
 
         req: Sequence = Sequence(
             req_id=reqID,
-            input_request=prompt,
-            tokenizer=self._tokenizer,
+            input_token_ids=prompt_token_ids,
             model_config=self.model_config,
             cache_backend=self._cache_backend,
             _prepare_sampling_config=self._model.generator._prepare_sampling_config,
             genConfig=generation_config,
-            mlperf_mode=request_data.mlperf_mode,
             spec_headroom=spec_headroom,
+            tokenizer=self._tokenizer,
         )
 
         result_buffer: Dict[str, Dict[str, Any]] = {}
         self.prefill_queue[req.id] = req
 
         try:
-            # Pass only input_ids with positions
             input_ids = req.input_encoded.input_ids
             positions = req.compute_positions(input_ids.shape[-1])
 
@@ -439,10 +430,8 @@ class ModelExecutor:
             self.remove_sequences([req.id])
             return result_buffer
 
-        # Update position counter after prefill
         req.num_computed_tokens += req.input_encoded.input_ids.shape[-1]
 
-        # If speculative decoding is enabled, warm up the draft KV cache
         if self._spec_decoder is not None:
             PACE_ASSERT(
                 req.sampling_config.sampling_mode == SamplingMode.GREEDY_SEARCH,
@@ -487,16 +476,8 @@ class ModelExecutor:
         )
         output_token_id = sampler_output.next_tokens
         req.append_token(output_token_id.item())
-        # MLPerf mode: skip text decoding, only store token_id
-        if req.mlperf_mode:
-            req.output_str.append(str(output_token_id[0].item()))
-        else:
-            req.output_str.append(
-                self._tokenizer.decode(output_token_id[0], skip_special_tokens=True)
-            )
 
         token_id_int = output_token_id[0].item()
-        decoded_token = req.output_str[-1]
 
         if req.stopping_criteria.stop_now(req.input_encoded.input_ids).item():
             PACE_INFO(
@@ -505,23 +486,23 @@ class ModelExecutor:
             )
             self.remove_sequences([req.id])
             result_buffer[str(req.id)] = {
-                "output": decoded_token,
-                "token_id": token_id_int,
+                "token_ids": [token_id_int],
                 "status": "COMPLETED",
+                "num_tokens_generated": 1,
+                "stop_reason": req.stopping_criteria.stop_reason,
             }
             return result_buffer
 
         self.move_to_decode_queue(req)
 
-        # Use string key for result buffer (scheduler expects string keys)
         result_buffer[str(req.id)] = {
-            "output": decoded_token,
-            "token_id": token_id_int,
+            "token_ids": [token_id_int],
             "status": "PREFILL_COMPLETED",
+            "num_tokens_generated": 1,
         }
 
         PACE_INFO(
-            f"Prefill completed for request {req.id}. Current output: {req.output_str[-1]}"
+            f"Prefill completed for request {req.id}. First token_id: {token_id_int}"
         )
         return result_buffer
 
@@ -530,7 +511,6 @@ class ModelExecutor:
         if self._model is None:
             raise RuntimeError("Model must be loaded before running decode.")
 
-        # Create a copy of the keys to avoid modifying dict during iteration
         decode_queue_keys = list(self.decode_queue.keys())
 
         if not decode_queue_keys:
@@ -542,12 +522,10 @@ class ModelExecutor:
         return self._standard_decode(
             decode_queue_keys,
             all_greedy=self._all_greedy,
-            all_mlperf=self._all_mlperf,
         )
 
-    # Standard (non-speculative) decode
-    def _standard_decode(self, decode_queue_keys, all_greedy, all_mlperf=False):
-        """Original single-token decode loop."""
+    def _standard_decode(self, decode_queue_keys, all_greedy):
+        """Standard single-token decode loop. Returns only token_ids."""
         current_batch_size = len(decode_queue_keys)
         PACE_DEBUG(f"Current decode batch size: {current_batch_size}")
         result_buffer: Dict[uuid.UUID, Dict[str, Any]] = {}
@@ -561,7 +539,6 @@ class ModelExecutor:
                 batch_positions_list.append(req.compute_positions(1))
                 batch_kv_cache_managers_list.append(req.kv_cache_manager)
             batch_input_ids = self.batch_input_ids(batched_input_ids)
-            # Batch positions: cat for tensor path, list for list path
             if len(batch_positions_list) == 1:
                 batch_positions = batch_positions_list[0]
             else:
@@ -579,17 +556,17 @@ class ModelExecutor:
                 merged,
                 **pa_kwargs,
             )
-            next_token_logits = model_out.logits[:, -1, :].clone().float()
-
             if all_greedy:
+                logits_last = model_out.logits[:, -1, :]
                 PACE_ASSERT(
-                    next_token_logits is not None
-                    and torch.isnan(next_token_logits).sum() == 0,
-                    "NaN values found in logits during greedy decode step, failing decode to prevent"
-                    " invalid token generation. Please check the model and input data for issues.",
+                    logits_last is not None and torch.isnan(logits_last).sum() == 0,
+                    "NaN values found in logits during greedy decode step, "
+                    "failing decode to prevent invalid token generation. "
+                    "Please check the model and input data for issues.",
                 )
-                next_tokens_batch = next_token_logits.argmax(dim=-1)
+                next_tokens_batch = logits_last.argmax(dim=-1)
             else:
+                next_token_logits = model_out.logits[:, -1, :].clone().float()
                 next_tokens_batch = torch.empty(
                     len(decode_queue_keys), dtype=torch.long
                 )
@@ -600,16 +577,6 @@ class ModelExecutor:
                     )
                     next_tokens_batch[i] = sampler_output.next_tokens[0, 0]
 
-            # Batch decode tokens (skip entirely if all requests are mlperf).
-            decoded_tokens = (
-                None
-                if all_mlperf
-                else self._tokenizer.batch_decode(
-                    next_tokens_batch.tolist(), skip_special_tokens=True
-                )
-            )
-
-            # Update per-sequence state.
             completed_ids = []
             for i, req_id in enumerate(decode_queue_keys):
                 req = self.decode_queue[req_id]
@@ -617,32 +584,24 @@ class ModelExecutor:
                 req.append_token(token_id_int)
                 req.num_computed_tokens += 1
 
-                if req.mlperf_mode:
-                    decoded_token = ""
-                else:
-                    decoded_token = decoded_tokens[i]
-                    req.output_str.append(decoded_token)
-
-                # Check if this sequence should stop
                 if req.stopping_criteria.stop_now(req.input_encoded.input_ids).item():
                     PACE_INFO(f"Stopping criteria met for sequence {req.id}.")
                     result_buffer[req.id] = {
-                        "output": decoded_token,
-                        "token_id": token_id_int,
+                        "token_ids": [token_id_int],
                         "status": "COMPLETED",
-                        "stop_reason": "stop_criteria",
+                        "num_tokens_generated": 1,
+                        "stop_reason": req.stopping_criteria.stop_reason,
                     }
                     completed_ids.append(req_id)
                     continue
                 req.kv_cache_manager = batch_kv_cache_managers_list[i]
 
                 result_buffer[str(req.id)] = {
-                    "output": decoded_token,
-                    "token_id": token_id_int,
+                    "token_ids": [token_id_int],
                     "status": "DECODING_IN_PROGRESS",
+                    "num_tokens_generated": 1,
                 }
 
-            # Batch remove completed sequences.
             if completed_ids:
                 self.remove_sequences(completed_ids)
         except Exception as e:
@@ -728,7 +687,6 @@ class ModelExecutor:
             else:
                 batched_target_pos = torch.cat(target_positions_list, dim=0)
 
-            target_kv_arg = target_kv_caches[0] if batch_size == 1 else target_kv_caches
             target_q_len = target_inputs[0].shape[-1]
             merged_target = self._cache_backend.merge_contexts(
                 target_kv_caches, query_len=target_q_len
@@ -740,7 +698,7 @@ class ModelExecutor:
             target_out = self._model.step(
                 batched_target_input,
                 batched_target_pos,
-                target_kv_arg,
+                merged_target,
                 **target_pa,
             )
 
@@ -753,6 +711,12 @@ class ModelExecutor:
                 req = reqs[i]
                 logits_i = target_out.logits[i : i + 1, -draft_size - 1 :, :]
                 logits_i = logits_i.clone().float()
+                PACE_ASSERT(
+                    torch.isnan(logits_i).sum() == 0,
+                    "NaN values found in logits during speculative decode step, "
+                    "failing decode to prevent invalid token generation. "
+                    "Please check the model and input data for issues.",
+                )
 
                 sampler_output: SamplerOutput = req.sampler.sample(
                     req.input_encoded.input_ids, logits_i
@@ -790,31 +754,28 @@ class ModelExecutor:
                     req._token_len += n_acc
                     req.input_encoded.input_ids = req._token_buffer[:, : req._token_len]
 
-                # Decode and stream all accepted tokens
-                decoded_tokens = self._tokenizer.decode(
-                    accepted[0], skip_special_tokens=True
+                accepted_ids = (
+                    accepted[0, :num_accepted].tolist() if num_accepted > 0 else []
                 )
 
-                # Check stopping criteria
                 if req.stopping_criteria.stop_now(
                     req.input_encoded.input_ids, num_new_tokens=num_accepted
                 ).item():
                     PACE_INFO(f"Stopping criteria met for sequence {req.id}.")
                     result_buffer[req.id] = {
-                        "output": decoded_tokens,
+                        "token_ids": accepted_ids,
                         "status": "COMPLETED",
                         "num_tokens_generated": num_accepted,
+                        "stop_reason": req.stopping_criteria.stop_reason,
                     }
                     self.remove_sequences([req_id])
                     continue
 
                 PACE_DEBUG(
-                    f"Speculative decode for {req.id}: accepted {num_accepted} "
-                    f"tokens: '{decoded_tokens}'"
+                    f"Speculative decode for {req.id}: accepted {num_accepted} tokens"
                 )
-                req.output_str.append(decoded_tokens)
                 result_buffer[req.id] = {
-                    "output": decoded_tokens,
+                    "token_ids": accepted_ids,
                     "status": "DECODING_IN_PROGRESS",
                     "num_tokens_generated": num_accepted,
                 }
@@ -864,17 +825,9 @@ class ModelExecutor:
                     seq.draft_kv_cache_manager = None
                 PACE_INFO(f"Removed sequence {seq_id} from {queue_name} queue.")
 
-        # Only recompute if flag was False — removing might restore True.
-        # If already True, removing a qualifying request can't flip it.
         if not self._all_greedy:
             self._all_greedy = (
                 all(r.sampler._greedy_fast_path for r in self.decode_queue.values())
-                if self.decode_queue
-                else True
-            )
-        if not self._all_mlperf:
-            self._all_mlperf = (
-                all(r.mlperf_mode for r in self.decode_queue.values())
                 if self.decode_queue
                 else True
             )

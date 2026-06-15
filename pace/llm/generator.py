@@ -494,7 +494,9 @@ class Generator(object):
         actual_lengths = self.actual_lengths
 
         if self.spec_decoder is not None:
-            spec_output = self.spec_decoder.speculate(inputs)
+            spec_output = self.spec_decoder.speculate(
+                inputs, initial_positions=self.initial_positions
+            )
             speculated_inputs = spec_output.extended_input
         else:
             speculated_inputs = inputs

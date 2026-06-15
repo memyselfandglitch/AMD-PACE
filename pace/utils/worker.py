@@ -4,7 +4,7 @@
 # ******************************************************************************
 
 import multiprocessing as mp
-from pace._C import thread_bind
+from pace.core import thread_bind
 from pace.utils.logging import PACE_DEBUG
 
 

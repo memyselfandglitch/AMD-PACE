@@ -9,16 +9,17 @@
 # https://github.com/EleutherAI/lm-evaluation-harness/blob/v0.4.7/lm_eval/models/vllm_causallms.py
 # https://github.com/EleutherAI/lm-evaluation-harness/blob/v0.4.7/lm_eval/models/neuralmagic.py
 
-from tqdm import tqdm
 import copy
+from tqdm import tqdm
 
 from typing import Union, Optional, List, Tuple
 import torch
 from transformers.tokenization_utils_base import BatchEncoding
 from lm_eval.api.registry import register_model
-from lm_eval.api.model import LM
+from lm_eval.api.model import TemplateLM
 from lm_eval.api.instance import Instance
-from lm_eval.models.utils import chunks, pad_and_concat
+from lm_eval.models.utils import chunks, postprocess_generated_text
+from lm_eval.models.utils_hf import pad_and_concat
 from lm_eval.utils import Reorderer
 
 from pace.llm import (
@@ -34,7 +35,7 @@ from datastructs import ModelArgs, GenerationArgs
 
 
 @register_model("pace")
-class PaceLLM(LM):
+class PaceLLM(TemplateLM):
 
     def __init__(
         self,
@@ -65,7 +66,6 @@ class PaceLLM(LM):
 
         spec_config = None
         if model_args.spec_config is not None:
-            # If spec_config is provided, use it to create a PardSpecDecodeConfig
             spec_config = PardSpecDecodeConfig(
                 model_name_or_path=model_args.spec_config["model_name"],
                 num_speculative_tokens=model_args.spec_config["num_speculated_tokens"],
@@ -82,9 +82,18 @@ class PaceLLM(LM):
         )
         self.model_config = self.model.get_config()
         self.tokenizer = self.model.get_tokenizer()
+        self.think_end_token = getattr(generation_args, "think_end_token", None)
 
         self._max_length = max_length
         self.max_gen_toks = max_gen_toks
+
+    @property
+    def eot_token_id(self):
+        return self.tokenizer.eos_token_id
+
+    @property
+    def tokenizer_name(self) -> str:
+        return self.tokenizer.name_or_path.replace("/", "__")
 
     @property
     def max_length(self):
@@ -142,37 +151,31 @@ class PaceLLM(LM):
 
         return encoding
 
-    def _encode_pair(
-        self, context: str, continuation: str
-    ) -> Tuple[List[int], List[int]]:
-        """
-        Copied directly from
-        https://github.com/EleutherAI/lm-evaluation-harness/blob/v0.4.7/lm_eval/models/huggingface.py
-        """
-        n_spaces = len(context) - len(context.rstrip())
-        if n_spaces > 0:
-            continuation = context[-n_spaces:] + continuation
-            context = context[:-n_spaces]
-        whole_enc = self.tok_encode(context + continuation)
-        context_enc = self.tok_encode(context)
-        context_enc_len = len(context_enc)
-        continuation_enc = whole_enc[context_enc_len:]
-        return context_enc, continuation_enc
+    def tok_decode(self, tokens: List[int], skip_special_tokens: bool = True) -> str:
+        return self.tokenizer.decode(tokens, skip_special_tokens=skip_special_tokens)
 
-    def tok_decode(self, tokens: List[int]) -> str:
-        return self.tokenizer.decode(tokens, skip_special_tokens=True)
+    def apply_chat_template(
+        self, chat_history: List[dict[str, str]], add_generation_prompt: bool = True
+    ) -> str:
+        return self.tokenizer.apply_chat_template(
+            chat_history,
+            tokenize=False,
+            add_generation_prompt=add_generation_prompt,
+            continue_final_message=not add_generation_prompt,
+        )
 
     @suppress_logging_fn
     def _model_generate(
         self,
         input_encoded: List[Union[torch.Tensor, BatchEncoding]],
         max_new_tokens: int,
-        stop: Optional[List[str]] = None,  # Add later
+        stop: Optional[List[str]] = None,
         **kwargs,
     ):
-        # Set temperature to 0 if not specified
         if "temperature" not in kwargs:
             kwargs["temperature"] = 0
+        kwargs.setdefault("repetition_penalty", 1.0)
+        kwargs.setdefault("frequency_penalty", 0.0)
         sampling_config = SamplingConfig(
             max_new_tokens=max_new_tokens, stop_strings=stop, **kwargs
         )
@@ -181,10 +184,9 @@ class PaceLLM(LM):
 
     def generate_until(self, requests: List[Instance]) -> List[str]:
         """
-        The function to generate a certain number of new tokens
-        given a context.
+        Generate tokens given a context until a stop sequence is hit.
 
-        This function is an adapted version of the original function from
+        Adapted from
         https://github.com/EleutherAI/lm-evaluation-harness/blob/v0.4.7/lm_eval/models/openai_completions.py
         """
         if not requests:
@@ -211,25 +213,28 @@ class PaceLLM(LM):
             if ret:
                 yield ret, lastuntil
 
+        skip_special = self.think_end_token is None
+
         for chunk, request_args in list(
             sameuntil_chunks(re_ord.get_reordered(), self.batch_size)
         ):
             inps = []
 
-            # make a deepcopy since we are changing arguments
             request_args = copy.deepcopy(request_args)
 
             self.max_gen_toks = request_args.pop("max_gen_toks", self.max_gen_toks)
 
             for context, _ in chunk:
-                # add context (prompts) to the list
                 inps.append(context)
 
             until = request_args.pop("until", ["<|endoftext|>"])
+            if self.think_end_token is not None:
+                gen_stops = [term for term in until if term.strip() and len(term) > 1]
+            else:
+                gen_stops = until
             request_args.pop("do_sample", None)
             request_args["temperature"] = request_args.get("temperature", 0)
 
-            # run inference (generate max_gen_toks tokens)
             max_ctx_len = self.max_length - self.max_gen_toks
             inps = self.tok_batch_encode(
                 inps,
@@ -238,43 +243,28 @@ class PaceLLM(LM):
             out = self._model_generate(
                 input_encoded=inps,
                 max_new_tokens=self.max_gen_toks,
-                stop=until,
+                stop=gen_stops,
                 **request_args,
             )
 
             for resp, (context, args_) in zip(out.output_token_ids, chunk):
                 resp = resp[inps["input_ids"].shape[1] :]
-                text = self.tok_decode(resp)
-                until_ = until
-                # split the text at the first occurrence of any of the until tokens
-                for term in until_:
-                    if len(term) > 0:
-                        text = text.split(term)[0]
-
+                raw_text = self.tok_decode(resp, skip_special_tokens=skip_special)
+                if self.tokenizer.eos_token and not skip_special:
+                    raw_text = raw_text.split(self.tokenizer.eos_token)[0]
+                text = postprocess_generated_text(raw_text, until, self.think_end_token)
                 res.append(text)
 
                 self.cache_hook.add_partial(
-                    "generate_until", (context, {"until": until_}), text
+                    "generate_until", (context, {"until": until}), text
                 )
 
         return re_ord.get_original(res)
 
-    def loglikelihood(self, requests: List[Instance]) -> List[tuple[float, bool]]:
-        new_reqs = []
-        for context, continuation in [req.args for req in requests]:
-            if context == "":
-                raise NotImplementedError(
-                    "Implementing empty context is not supported yet"
-                )
-            context_enc, continuation_enc = self._encode_pair(context, continuation)
-
-            new_reqs.append(((context, continuation), context_enc, continuation_enc))
-
-        return self._loglikelihood_tokens(new_reqs)
-
     def _loglikelihood_tokens(
         self,
         requests: List[Tuple[Tuple[str, str], List[int], List[int]]],
+        disable_tqdm: bool = False,
     ) -> List[Tuple[float, bool]]:
         res = []
 
@@ -287,6 +277,7 @@ class PaceLLM(LM):
 
         for chunk in tqdm(
             list(chunks(re_ord.get_reordered(), self.batch_size)),
+            disable=disable_tqdm,
         ):
             batch_inp = []
             batch_cache_key = []
@@ -359,7 +350,7 @@ class PaceLLM(LM):
         return re_ord.get_original(res)
 
     def loglikelihood_rolling(
-        self, requests: List[Instance]
+        self, requests: List[Instance], disable_tqdm: bool = False
     ) -> List[tuple[float, bool]]:
         raise NotImplementedError(
             "loglikelihood_rolling not yet supported for PACE models"

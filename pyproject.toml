@@ -1,21 +1,35 @@
 [build-system]
 requires = [
-    "torch==2.9.0+cpu",
+    "torch==2.12.0+cpu",
     "clang-format>=17.0.6",
     "cmake==3.31.6",
     "setuptools>=77.0.3",
     "setuptools-scm>=8.1",
     "ninja>=1.11",
+    "wheel>=0.41",
 ]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "pace"
-authors = [{name = "AMD"}]
-readme = "README.md"
-description = "PACE is a plugin to PyTorch for efficient and scalable inference of deep learning models."
+name = "amd-pace"
+authors = [{ name = "AMD" }]
+maintainers = [{ name = "AMD" }]
+readme = "docs/PYPI_README.md"
+description = "PACE (Platform Aware Compute Engine): high-performance LLM inference on AMD CPUs."
 requires-python = ">=3.10,<3.14"
+license = "MIT"
+license-files = ["LICENSE", "NOTICE"]
+keywords = ["amd", "pace", "llm", "inference", "pytorch", "cpu"]
 dynamic = ["version", "dependencies"]
+
+[tool.setuptools.dynamic]
+dependencies = { file = ["runtime_requirements.txt"] }
+
+[project.urls]
+Homepage      = "https://github.com/amd/amd-pace"
+Documentation = "https://github.com/amd/amd-pace#readme"
+Repository    = "https://github.com/amd/amd-pace"
+Issues        = "https://github.com/amd/amd-pace/issues"
 
 [tool.setuptools_scm]
 version_file = "pace/_version.py"

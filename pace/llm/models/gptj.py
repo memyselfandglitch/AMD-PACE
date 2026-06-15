@@ -71,13 +71,13 @@ class GPTJAttention(nn.Module):
 
         self.rotary_dim = config.rotary_dim
         pos_embd_dim = self.rotary_dim or self.embed_dim
+        # GPT-J doesn't expose rope_parameters / rope_scaling on HF -- its RoPE
+        # is configured via `rotary_dim` and the standard rope_theta=10000.
         self.rotary_emb = RotaryEmbedding(
-            rope_scaling=(
-                config.rope_scaling if hasattr(config, "rope_scaling") else None
-            ),
+            rope_scaling=None,
             rotary_dim=pos_embd_dim,
             max_position_embeddings=config.max_position_embeddings,
-            rope_theta=getattr(config, "rope_theta", 10000),
+            rope_theta=10000,
             backend_impl=opconfig.rope,
         )
         self.attn = Attention(

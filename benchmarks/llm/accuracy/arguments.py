@@ -72,6 +72,13 @@ def verify_args(args):
         "kv_cache_type must be 'BMC', 'DYNAMIC', 'PAGED', or 'SLAB_POOL'.",
     )
 
+    think_end_token = config["generation_args"].get("think_end_token", None)
+    if think_end_token is not None:
+        PACE_LLM_ASSERT(
+            isinstance(think_end_token, str) and len(think_end_token) > 0,
+            f"think_end_token must be a non-empty string or null, got: {think_end_token!r}",
+        )
+
     if "llm_operators" in config["model_args"]:
         PACE_LLM_ASSERT(
             isinstance(config["model_args"]["llm_operators"], dict),
@@ -166,6 +173,7 @@ def get_args() -> argparse.Namespace:
     #     "generation_args": {
     #         "batch_size": 1,
     #         "kv_cache_type": "BMC",
+    #         "think_end_token": null
     #     },
     #     "tasks": [
     #         {
@@ -216,6 +224,12 @@ def get_args() -> argparse.Namespace:
     generation_args = GenerationArgs(
         batch_size=config["generation_args"]["batch_size"],
         kv_cache_type=config["generation_args"]["kv_cache_type"],
+        think_end_token=config["generation_args"].get("think_end_token", None),
+        apply_chat_template=config["generation_args"].get("apply_chat_template", False),
+        fewshot_as_multiturn=config["generation_args"].get(
+            "fewshot_as_multiturn", True
+        ),
+        system_instruction=config["generation_args"].get("system_instruction", None),
     )
 
     config = {

@@ -42,7 +42,7 @@ Each batch tests different:
 
 1. **Start the inference server**:
    ```bash
-   cd amd_pace/pace/server/engine
+   cd amd-pace/pace/server/engine
    python frontend.py
    ```
    ***Expected Output***:
@@ -57,7 +57,7 @@ Each batch tests different:
 
 2. **Run the test suite**:
    ```bash
-   cd amd_pace/
+   cd amd-pace/
    python -m unittest tests.server.engine.test_engine -v
    ```
 
