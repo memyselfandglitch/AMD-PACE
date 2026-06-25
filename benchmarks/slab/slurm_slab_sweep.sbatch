@@ -32,6 +32,17 @@ fi
 # shellcheck disable=SC1091
 source "${VENV_DIR}/bin/activate"
 
+if [ ! -f pace/lib/libpace_cpp.so ]; then
+  mkdir -p pace/lib
+  BUILT_LIB="$(find build -name libpace_cpp.so -print -quit)"
+  if [ -z "${BUILT_LIB}" ]; then
+    echo "Missing pace/lib/libpace_cpp.so."
+    echo "Run first: sbatch benchmarks/slab/slurm_build_and_quick.sbatch"
+    exit 1
+  fi
+  cp "${BUILT_LIB}" pace/lib/libpace_cpp.so
+fi
+
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-64}"
 export PACE_LOG_LEVEL=warning
 

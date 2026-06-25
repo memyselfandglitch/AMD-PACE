@@ -40,6 +40,20 @@ python -m pip install --extra-index-url https://download.pytorch.org/whl/cpu tor
 python -m pip install -r requirements.txt
 python -m pip install -r build_requirements.txt -v .
 
+# The benchmark runs from the source checkout, so Python imports ./pace before
+# the installed wheel. Copy the freshly built shared library into the source tree.
+mkdir -p pace/lib
+if [ ! -f pace/lib/libpace_cpp.so ]; then
+  BUILT_LIB="$(find build -name libpace_cpp.so -print -quit)"
+  if [ -z "${BUILT_LIB}" ]; then
+    echo "Could not find libpace_cpp.so under build/ after installation."
+    find build -name '*.so' -print || true
+    exit 1
+  fi
+  cp "${BUILT_LIB}" pace/lib/libpace_cpp.so
+fi
+ls -lh pace/lib/libpace_cpp.so
+
 python - <<'PY'
 import os
 import platform
