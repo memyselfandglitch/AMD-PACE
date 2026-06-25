@@ -92,3 +92,18 @@ perf stat -e LLC-loads,LLC-load-misses,cache-references,cache-misses \
 For the report, compare latency trends against LLC miss trends. The strongest
 result would be a layout/block-size choice that improves both latency and cache
 miss rate for a specific phase and model shape.
+
+## Analyze Results
+
+After a sweep finishes, summarize the raw CSV into winner tables:
+
+```bash
+python benchmarks/slab/analyze_slab_results.py \
+  benchmarks/slab/results/slab_sweep_<jobid>.csv \
+  --out-dir benchmarks/slab/results/analysis_<jobid>
+```
+
+Start with `median_ms` rather than `mean_ms`; it is less sensitive to occasional
+system noise. The generated `summary.md` counts which layout/block-size choice
+won for each fixed workload and compares empirical best block size against the
+PACE L2-based heuristic.
