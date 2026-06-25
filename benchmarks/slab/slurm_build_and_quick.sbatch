@@ -34,7 +34,8 @@ fi
 # shellcheck disable=SC1091
 source "${VENV_DIR}/bin/activate"
 
-python -m pip install --upgrade pip
+python -m pip install --upgrade pip wheel
+python -m pip install "setuptools>=77,<82"
 python -m pip install --extra-index-url https://download.pytorch.org/whl/cpu torch==2.12.0+cpu
 python -m pip install -r requirements.txt
 python -m pip install -r build_requirements.txt -v .
