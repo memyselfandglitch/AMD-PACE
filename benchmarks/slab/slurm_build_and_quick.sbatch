@@ -1,8 +1,8 @@
 #!/bin/bash
 #SBATCH --job-name=pace-slab-quick
 #SBATCH --partition=jobmn01
-#SBATCH --output=benchmarks/slab/results/slurm-%j-quick.out
-#SBATCH --error=benchmarks/slab/results/slurm-%j-quick.err
+#SBATCH --output=slurm-%j-quick.out
+#SBATCH --error=slurm-%j-quick.err
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=32
@@ -16,15 +16,26 @@ set -euo pipefail
 #
 # This cluster requires CPU-only work to use the CPU partition, not GPU.
 
+REPO_ROOT="${SLURM_SUBMIT_DIR:-$(pwd)}"
+cd "${REPO_ROOT}"
 mkdir -p benchmarks/slab/results
 
-if command -v conda >/dev/null 2>&1; then
-  # shellcheck disable=SC1091
-  source "$(conda info --base)/etc/profile.d/conda.sh"
-  conda activate pace-env-py3.12
+VENV_DIR="${PACE_VENV_DIR:-/data/scratch/${USER}/pace-venv}"
+PY_BOOTSTRAP="${PY_BOOTSTRAP:-python3}"
+
+echo "repo=${REPO_ROOT}"
+echo "venv=${VENV_DIR}"
+echo "bootstrap_python=$(${PY_BOOTSTRAP} --version 2>&1)"
+
+if [ ! -x "${VENV_DIR}/bin/python" ]; then
+  "${PY_BOOTSTRAP}" -m venv "${VENV_DIR}"
 fi
 
+# shellcheck disable=SC1091
+source "${VENV_DIR}/bin/activate"
+
 python -m pip install --upgrade pip
+python -m pip install --extra-index-url https://download.pytorch.org/whl/cpu torch==2.12.0+cpu
 python -m pip install -r requirements.txt
 python -m pip install -r build_requirements.txt -v .
 

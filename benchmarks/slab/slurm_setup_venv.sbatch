@@ -1,0 +1,47 @@
+#!/bin/bash
+#SBATCH --job-name=pace-venv
+#SBATCH --partition=jobmn01
+#SBATCH --output=slurm-%j-venv.out
+#SBATCH --error=slurm-%j-venv.err
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=32G
+#SBATCH --time=01:00:00
+
+set -euo pipefail
+
+# Submit from the AMD-PACE repo root:
+#   sbatch benchmarks/slab/slurm_setup_venv.sbatch
+
+REPO_ROOT="${SLURM_SUBMIT_DIR:-$(pwd)}"
+cd "${REPO_ROOT}"
+
+VENV_DIR="${PACE_VENV_DIR:-/data/scratch/${USER}/pace-venv}"
+PY_BOOTSTRAP="${PY_BOOTSTRAP:-python3}"
+
+echo "repo=${REPO_ROOT}"
+echo "venv=${VENV_DIR}"
+echo "bootstrap_python=$(${PY_BOOTSTRAP} --version 2>&1)"
+
+if [ ! -x "${VENV_DIR}/bin/python" ]; then
+  "${PY_BOOTSTRAP}" -m venv "${VENV_DIR}"
+fi
+
+# shellcheck disable=SC1091
+source "${VENV_DIR}/bin/activate"
+
+python -m pip install --upgrade pip setuptools wheel
+python -m pip install --extra-index-url https://download.pytorch.org/whl/cpu torch==2.12.0+cpu
+python -m pip install -r requirements.txt
+python -m pip install -r build_requirements.txt
+
+python --version
+python - <<'PY'
+import platform
+import torch
+
+print("platform:", platform.platform())
+print("torch:", torch.__version__)
+print("torch file:", torch.__file__)
+PY
