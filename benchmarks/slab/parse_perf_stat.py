@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import csv
 import math
+import re
 from pathlib import Path
 
 
@@ -55,6 +56,10 @@ def _format(value: object) -> object:
     if value is None:
         return ""
     return value
+
+
+def _event_column(event: str) -> str:
+    return "event_" + re.sub(r"[^A-Za-z0-9_]+", "_", event).strip("_")
 
 
 def parse_perf_csv(path: Path) -> tuple[dict[str, float], list[str]]:
@@ -124,11 +129,15 @@ def main() -> None:
         "block_size",
         "batch_size",
         "seq_len",
+        "query_len",
+        "active_batch_size",
         "shape",
         "num_q_heads",
         "num_kv_heads",
         "head_dim",
         "exit_fraction",
+        "omp_threads",
+        "slab_schedule",
         "warmups",
         "repeats",
         "mean_ms",
@@ -144,6 +153,9 @@ def main() -> None:
     tokens = float(bench.get("tokens", 0) or 0)
     for counter in COUNTERS:
         row[counter] = counters.get(counter)
+
+    for counter in sorted(set(counters) - set(COUNTERS)):
+        row[_event_column(counter)] = counters[counter]
 
     row["ipc"] = _safe_div(counters.get("instructions"), counters.get("cycles"))
     row["cache_miss_rate"] = _safe_div(

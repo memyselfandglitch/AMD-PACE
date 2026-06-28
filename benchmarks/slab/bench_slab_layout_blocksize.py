@@ -274,26 +274,34 @@ def _run_decode_like(
 
 def run_case(case: Case, warmups: int, repeats: int) -> dict[str, object]:
     if case.phase == "prefill":
+        query_len = case.seq_len
         timings, tokens, total_blocks = _run_prefill(case, warmups, repeats)
     elif case.phase == "decode":
+        query_len = 1
         timings, tokens, total_blocks = _run_decode_like(case, warmups, repeats, 1)
     elif case.phase == "mtd":
+        query_len = 8
         timings, tokens, total_blocks = _run_decode_like(case, warmups, repeats, 8)
     else:
         raise ValueError(f"Unsupported phase: {case.phase}")
 
     mean_ms = statistics.fmean(timings)
+    active_batch_size = int(tokens // query_len) if query_len else 0
     return {
         "phase": case.phase,
         "layout": case.layout,
         "block_size": case.block_size,
         "batch_size": case.batch_size,
         "seq_len": case.seq_len,
+        "query_len": query_len,
+        "active_batch_size": active_batch_size,
         "shape": case.shape.name,
         "num_q_heads": case.shape.num_q_heads,
         "num_kv_heads": case.shape.num_kv_heads,
         "head_dim": case.shape.head_dim,
         "exit_fraction": case.exit_fraction,
+        "omp_threads": int(os.environ.get("OMP_NUM_THREADS", "0") or 0),
+        "slab_schedule": os.environ.get("SLAB_SCHEDULE", "auto"),
         "warmups": warmups,
         "repeats": repeats,
         "mean_ms": mean_ms,
@@ -415,11 +423,15 @@ def main() -> None:
         "block_size",
         "batch_size",
         "seq_len",
+        "query_len",
+        "active_batch_size",
         "shape",
         "num_q_heads",
         "num_kv_heads",
         "head_dim",
         "exit_fraction",
+        "omp_threads",
+        "slab_schedule",
         "warmups",
         "repeats",
         "mean_ms",

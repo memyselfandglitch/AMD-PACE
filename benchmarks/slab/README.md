@@ -115,6 +115,48 @@ Good first cases:
 3. Larger-block block-major case: same parameters with `LAYOUT=block_major BLOCK_SIZE=256`
 4. Prefill case: `PHASE=prefill LAYOUT=head_major BLOCK_SIZE=64 BATCH_SIZE=1 SEQ_LEN=8192 SHAPE=slm_gqa:8:4:64`
 
+To combine single-case perf CSVs into one table:
+
+```bash
+python benchmarks/slab/combine_perf_results.py \
+  --input-dir benchmarks/slab/results/perf \
+  --output benchmarks/slab/results/perf_combined.csv
+```
+
+To run a focused hardware-counter sweep for autotuning evidence:
+
+```bash
+sbatch benchmarks/slab/slurm_slab_perf_sweep.sbatch
+```
+
+The sweep writes:
+
+```text
+benchmarks/slab/results/perf_sweeps/perf_sweep_<jobid>.csv
+benchmarks/slab/results/perf_sweeps/analysis_<jobid>/perf_autotune_summary.md
+benchmarks/slab/results/perf_sweeps/analysis_<jobid>/perf_autotune_decisions.csv
+```
+
+The default matrix is small enough to iterate on but broad enough to expose
+autotuning conditions: prefill/decode/MTD, short and long contexts, both
+layouts, block sizes 16/64/128/256, batch 16, three shapes, and exit fractions
+0.0/0.5 for decode and MTD.
+
+If `LLC-loads` and `LLC-load-misses` appear in `unavailable_events`, those perf
+aliases are not exposed on the server. To look for AMD-specific L3 events, run
+inside Slurm:
+
+```bash
+srun -p jobmn01 perf list | grep -i -E 'llc|l3'
+```
+
+If useful events are listed, pass them to the sweep:
+
+```bash
+PERF_EVENTS='task-clock,cycles,instructions,cache-references,cache-misses,<event>' \
+sbatch benchmarks/slab/slurm_slab_perf_sweep.sbatch
+```
+
 ## Analyze Results
 
 After a sweep finishes, summarize the raw CSV into winner tables:
