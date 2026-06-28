@@ -1,0 +1,2 @@
+phase,layout,block_size,batch_size,seq_len,shape,num_q_heads,num_kv_heads,head_dim,exit_fraction,warmups,repeats,mean_ms,median_ms,p95_ms,min_ms,max_ms,tokens,tokens_per_second,total_blocks
+mtd,block_major,16,16,8192,llama_gqa,32,8,128,0.5,5,20,15.762998200000002,15.7634445,16.230739,15.212392,16.307535,64,4060.14129976872,8768

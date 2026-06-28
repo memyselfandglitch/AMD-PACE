@@ -1,0 +1,9 @@
+# started on Sun Jun 28 22:43:38 2026
+
+52741.38,msec,task-clock,52741375454,100.00,6.933,CPUs utilized
+164072963165,,cycles,52741375454,100.00,3.111,GHz
+105814004543,,instructions,52741375454,100.00,0.64,insn per cycle
+8968345294,,cache-references,52741375454,100.00,170.044,M/sec
+955380262,,cache-misses,52741375454,100.00,10.653,of all cache refs
+<not supported>,,LLC-loads,0,100.00,,
+<not supported>,,LLC-load-misses,0,100.00,,
