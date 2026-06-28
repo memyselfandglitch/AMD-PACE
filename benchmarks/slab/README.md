@@ -80,18 +80,40 @@ python benchmarks/slab/bench_slab_layout_blocksize.py \
   --exit-fractions 0.0,0.25,0.5,0.75
 ```
 
-## Cache Counter Pass
+## Hardware Counter Pass
 
-After the latency sweep works, collect hardware counters with `perf` on Linux:
+After the latency sweep works, collect hardware counters for a few selected
+cases with `perf` on Linux. This is the next step after identifying interesting
+layout/block-size wins and losses from the sweep.
 
 ```bash
-perf stat -e LLC-loads,LLC-load-misses,cache-references,cache-misses \
-  python benchmarks/slab/bench_slab_layout_blocksize.py --quick
+PHASE=mtd LAYOUT=head_major BLOCK_SIZE=16 BATCH_SIZE=16 SEQ_LEN=8192 \
+SHAPE=slm_gqa:8:4:64 EXIT_FRACTION=0.5 \
+sbatch benchmarks/slab/slurm_slab_perf.sbatch
 ```
 
-For the report, compare latency trends against LLC miss trends. The strongest
-result would be a layout/block-size choice that improves both latency and cache
-miss rate for a specific phase and model shape.
+The Slurm script writes:
+
+- one benchmark CSV with latency and tokens/sec
+- one raw `perf stat -x,` CSV
+- one parsed CSV with counters and derived metrics
+
+The parsed CSV includes `cycles`, `instructions`, `cache-references`,
+`cache-misses`, `LLC-loads`, `LLC-load-misses`, `ipc`, cache miss rates,
+cycles/token, and instructions/token. If the server does not expose LLC events,
+the script retries with generic cache counters and records unavailable events.
+
+For the report, compare latency trends against cache miss trends. The strongest
+result would be a layout/block-size choice that improves latency and also
+reduces cache misses, cycles/token, or instructions/token for a specific phase
+and model shape.
+
+Good first cases:
+
+1. Strong head-major win: `PHASE=mtd LAYOUT=head_major BLOCK_SIZE=16 BATCH_SIZE=16 SEQ_LEN=8192 SHAPE=slm_gqa:8:4:64 EXIT_FRACTION=0.5`
+2. Matching block-major case: same parameters with `LAYOUT=block_major`
+3. Larger-block block-major case: same parameters with `LAYOUT=block_major BLOCK_SIZE=256`
+4. Prefill case: `PHASE=prefill LAYOUT=head_major BLOCK_SIZE=64 BATCH_SIZE=1 SEQ_LEN=8192 SHAPE=slm_gqa:8:4:64`
 
 ## Analyze Results
 
