@@ -1,0 +1,16 @@
+Traceback (most recent call last):
+  File "/data/scratch/deveshisingh/AMD-PACE/benchmarks/slab/analyze_blocksize_autotune.py", line 438, in <module>
+    main()
+  File "/data/scratch/deveshisingh/AMD-PACE/benchmarks/slab/analyze_blocksize_autotune.py", line 424, in main
+    validations = leave_one_seq_len_out(groups, args.metric, args.l2_bytes)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/scratch/deveshisingh/AMD-PACE/benchmarks/slab/analyze_blocksize_autotune.py", line 259, in leave_one_seq_len_out
+    chosen_block = fallback_rule_lookup(rule_map, train, sample, metric)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/scratch/deveshisingh/AMD-PACE/benchmarks/slab/analyze_blocksize_autotune.py", line 234, in fallback_rule_lookup
+    return choose_block_for_group(list(train_groups.values()), metric)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/scratch/deveshisingh/AMD-PACE/benchmarks/slab/analyze_blocksize_autotune.py", line 183, in choose_block_for_group
+    return min(scores, key=lambda block_size: median(scores[block_size]))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: min() arg is an empty sequence

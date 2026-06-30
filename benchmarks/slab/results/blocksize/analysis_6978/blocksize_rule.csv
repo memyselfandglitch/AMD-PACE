@@ -1,0 +1,10 @@
+phase,shape,seq_bucket,chosen_block_size,training_workloads,median_regret_vs_oracle,max_regret_vs_oracle
+prefill,llama_gqa,long,128,3,1.0,1.0
+prefill,llama_gqa,medium,128,3,1.0,1.0024331988805673
+prefill,llama_gqa,short,128,6,1.0052731418959109,1.0875185182463354
+prefill,mha,long,256,3,1.0,1.0009547701747752
+prefill,mha,medium,128,3,1.0,1.0654514809733175
+prefill,mha,short,64,6,1.0,1.0
+prefill,slm_gqa,long,256,3,1.0,1.0050710731836778
+prefill,slm_gqa,medium,128,3,1.0,1.21023370147345
+prefill,slm_gqa,short,64,6,1.0,1.1000344356442242
