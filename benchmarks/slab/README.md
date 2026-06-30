@@ -62,6 +62,24 @@ It requests generic cache counters and LLC counters. If the machine does not
 expose `LLC-loads` or `LLC-load-misses`, the parser records those events in the
 `unavailable_events` column instead of silently treating them as zero.
 
+## Selected Hardware-Counter Cases
+
+After a latency sweep has produced `analysis_<job>/decisions.csv`, select a
+small number of high-value cases and run only baseline-vs-best comparisons:
+
+```bash
+python3 benchmarks/slab/select_blocksize_perf_cases.py \
+  benchmarks/slab/results/blocksize/analysis_6979/decisions.csv \
+  --out benchmarks/slab/results/blocksize/analysis_6979/selected_perf_cases_6979.csv
+
+sbatch benchmarks/slab/slurm_slab_blocksize_perf_selected.sbatch
+```
+
+The selected perf script runs each case twice: once with the current heuristic
+block size and once with the empirical best block size. This is the right next
+step when the question is "why did this block size win?" rather than "which
+block size won?"
+
 ## What The Analyzer Tests
 
 The analyzer compares:
