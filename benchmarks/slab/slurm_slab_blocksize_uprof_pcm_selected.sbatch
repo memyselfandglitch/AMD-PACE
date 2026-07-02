@@ -87,7 +87,7 @@ fi
   --repeats "${REPEATS:-5000}" \
   --python "$PYTHON" \
   --metrics "${UPROF_METRICS:-ipc,l2,l3}" \
-  --scope-args "${UPROF_SCOPE_ARGS:--a}"
+  --scope-args="${UPROF_SCOPE_ARGS:--a}"
 
 echo "AMDuProfPcm: $AMDUPROFPCM_BIN"
 echo "Selected cases: $CASES_CSV"
