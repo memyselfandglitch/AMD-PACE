@@ -80,6 +80,54 @@ block size and once with the empirical best block size. This is the right next
 step when the question is "why did this block size win?" rather than "which
 block size won?"
 
+## Selected AMD uProf PCM Cases
+
+AMD uProf PCM is the preferred next step on AMD EPYC because it can expose
+AMD-specific IPC, L2, L3, and memory metrics that generic `perf` may not expose
+cleanly on the server.
+
+Run the same selected baseline-vs-best cases under `AMDuProfPcm`:
+
+```bash
+sbatch benchmarks/slab/slurm_slab_blocksize_uprof_pcm_selected.sbatch
+```
+
+If `AMDuProfPcm` is not on `PATH`, pass its full path:
+
+```bash
+AMDUPROFPCM=/path/to/AMDuProf/bin/AMDuProfPcm \
+sbatch benchmarks/slab/slurm_slab_blocksize_uprof_pcm_selected.sbatch
+```
+
+Useful overrides:
+
+```bash
+UPROF_METRICS=ipc,l2,l3 \
+UPROF_SCOPE_ARGS="-a" \
+REPEATS=5000 \
+sbatch benchmarks/slab/slurm_slab_blocksize_uprof_pcm_selected.sbatch
+```
+
+For memory bandwidth, run a separate pass because uProf's memory metrics are
+usually collected system-wide:
+
+```bash
+UPROF_METRICS=memory \
+UPROF_SCOPE_ARGS="-a" \
+sbatch benchmarks/slab/slurm_slab_blocksize_uprof_pcm_selected.sbatch
+```
+
+Outputs:
+
+- `benchmarks/slab/results/blocksize_uprof_pcm_selected/selected_uprof_pcm_<job>.csv`
+- `benchmarks/slab/results/blocksize_uprof_pcm_selected/raw_<job>/*.uprof.csv`
+- `benchmarks/slab/results/blocksize_uprof_pcm_selected/raw_<job>/*.latency.csv`
+
+The manifest CSV links each run to the raw uProf CSV and latency CSV. We keep
+the raw uProf files because the exact columns can vary by uProf version and
+metric group; once one server run is complete, parse those files into a compact
+comparison table.
+
 ## What The Analyzer Tests
 
 The analyzer compares:
