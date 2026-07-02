@@ -1,0 +1,3 @@
+Profiling started.
+Wrote 1 rows to benchmarks/slab/results/blocksize_uprof_pcm_selected/raw_6989/003_mtd_strong_short_llama_heuristic_mtd_llama_gqa_b1_s128_exit0p5_bs64.latency.csv
+Generated Cumulative data file path: benchmarks/slab/results/blocksize_uprof_pcm_selected/raw_6989/003_mtd_strong_short_llama_heuristic_mtd_llama_gqa_b1_s128_exit0p5_bs64.uprof.csv

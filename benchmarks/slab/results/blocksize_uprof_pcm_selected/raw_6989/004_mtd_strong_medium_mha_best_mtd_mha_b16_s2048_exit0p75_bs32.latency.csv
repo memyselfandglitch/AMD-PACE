@@ -1,0 +1,2 @@
+phase,layout,block_size,batch_size,seq_len,query_len,active_batch_size,shape,num_q_heads,num_kv_heads,head_dim,exit_fraction,l2_bytes,heuristic_block_size,bytes_per_token,block_bytes,kv_history_bytes,warmups,repeats,mean_ms,median_ms,p95_ms,min_ms,max_ms,tokens,tokens_per_second,total_blocks,omp_threads,slab_schedule
+mtd,head_major,32,16,2048,8,4,mha,8,8,64,0.75,1048576,128,2048,65536,16777216,10,5000,0.0924409894,0.090117,0.101334,0.084238,2.346957,32,355093.93344208086,320,64,auto
