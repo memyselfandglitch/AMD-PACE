@@ -48,6 +48,23 @@ if [[ -n "${PACE_ACTIVATE:-}" ]]; then
     source "${PACE_ACTIVATE}"
 fi
 
+# Prefer an explicitly supplied interpreter, then the environment's `python`,
+# and finally `python3` (many cluster images do not provide a `python` alias).
+if [[ -n "${PACE_PYTHON:-}" ]]; then
+    PYTHON_BIN="${PACE_PYTHON}"
+elif command -v python >/dev/null 2>&1; then
+    PYTHON_BIN="$(command -v python)"
+elif command -v python3 >/dev/null 2>&1; then
+    PYTHON_BIN="$(command -v python3)"
+else
+    echo "ERROR: Python was not found. Submit with PACE_PYTHON=/absolute/path/to/python." >&2
+    exit 127
+fi
+if [[ ! -x "${PYTHON_BIN}" ]]; then
+    echo "ERROR: PACE_PYTHON is not executable: ${PYTHON_BIN}" >&2
+    exit 126
+fi
+
 echo "job_id=${SLURM_JOB_ID}"
 echo "host=$(hostname)"
 echo "started=$(date --iso-8601=seconds)"
@@ -77,14 +94,16 @@ ps -eo user,pid,psr,pcpu,pmem,comm --sort=-pcpu | head -n 20 || true
 
 lscpu
 numactl --hardware 2>/dev/null || true
-python --version
+echo "python=${PYTHON_BIN}"
+"${PYTHON_BIN}" --version
+"${PYTHON_BIN}" -c 'import torch; import pace; print("PACE Python imports: OK")'
 
-srun --cpu-bind=cores python -u block_size_sweep.py run \
+srun --cpu-bind=cores "${PYTHON_BIN}" -u block_size_sweep.py run \
     --spec "${SPEC}" \
     --output-dir "${RESULT_DIR}" \
     --keep-going
 
-python -u block_size_sweep.py summarize \
+"${PYTHON_BIN}" -u block_size_sweep.py summarize \
     --results "${RESULT_DIR}/results.csv" \
     --min-margin-pct 3
 

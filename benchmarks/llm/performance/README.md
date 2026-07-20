@@ -177,6 +177,17 @@ sbatch --partition=CPU_PARTITION \
   benchmarks/llm/performance/slurm_block_size_sweep.sh
 ```
 
+Alternatively, pass the absolute Python interpreter that has PACE installed:
+
+```bash
+sbatch --partition=CPU_PARTITION \
+  --export=ALL,PACE_PYTHON=/absolute/path/to/python3 \
+  benchmarks/llm/performance/slurm_block_size_sweep.sh
+```
+
+The job validates `import torch` and `import pace` before starting the sweep, so
+an incorrect environment fails immediately instead of consuming the allocation.
+
 Monitor or cancel the job with `squeue -j JOB_ID` and `scancel JOB_ID`. The job
 requests one exclusive node, 96 physical cores, 512 GB RAM, and 24 hours,
 writes Slurm logs in the submission directory, pins OpenMP workers to cores,
