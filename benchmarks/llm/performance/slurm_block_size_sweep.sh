@@ -98,10 +98,21 @@ echo "python=${PYTHON_BIN}"
 "${PYTHON_BIN}" --version
 "${PYTHON_BIN}" -c 'import torch; import pace; print("PACE Python imports: OK")'
 
-srun --cpu-bind=cores "${PYTHON_BIN}" -u block_size_sweep.py run \
+# This cluster's Slurm build does not support --cpu-bind. Pin the complete
+# process tree to one EPYC socket instead; child benchmark processes inherit
+# both the CPU affinity and local-memory policy. Override with PACE_NUMA_NODE.
+NUMA_PREFIX=()
+if command -v numactl >/dev/null 2>&1; then
+    PACE_NUMA_NODE="${PACE_NUMA_NODE:-0}"
+    NUMA_PREFIX=(numactl --cpunodebind="${PACE_NUMA_NODE}" --membind="${PACE_NUMA_NODE}")
+    echo "NUMA binding: node ${PACE_NUMA_NODE}"
+else
+    echo "WARNING: numactl is unavailable; proceeding without explicit NUMA binding" >&2
+fi
+
+"${NUMA_PREFIX[@]}" "${PYTHON_BIN}" -u block_size_sweep.py run \
     --spec "${SPEC}" \
-    --output-dir "${RESULT_DIR}" \
-    --keep-going
+    --output-dir "${RESULT_DIR}"
 
 "${PYTHON_BIN}" -u block_size_sweep.py summarize \
     --results "${RESULT_DIR}/results.csv" \

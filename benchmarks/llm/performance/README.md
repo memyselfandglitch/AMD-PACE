@@ -215,6 +215,13 @@ inspect it with `scontrol show partition CPU_PARTITION` and confirm the
 exclusive request with the cluster administrator if another allocation ever
 appears.
 
+On the documented `mn01` host, Slurm CPU binding is unavailable and the node
+has two 96-core NUMA sockets. The script therefore runs the benchmark directly
+inside the batch allocation and uses `numactl` to bind its complete process tree
+and memory to NUMA node 0. Set `PACE_NUMA_NODE=1` at submission to test the
+other socket. It also stops at the first failed point so a model-access or
+configuration error is not repeated across the entire sweep.
+
 Scratch is cleaned weekly on this cluster, so copy the result directory to
 persistent storage after the run. If the CPU partition exposes fewer than 96
 cores or has different memory/time limits, adjust the corresponding `#SBATCH`
