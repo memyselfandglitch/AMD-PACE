@@ -1,0 +1,54 @@
+{
+    "model_args": {
+        "model_name": "Qwen/Qwen2.5-7B-Instruct",
+        "dtype": "torch.bfloat16",
+        "llm_operators": {
+            "norm": "jit",
+            "qkvprojection": "tpp",
+            "attention": "jit",
+            "outprojection": "tpp",
+            "mlp": "tpp",
+            "lmhead": "tpp"
+        },
+        "spec_config": null
+    },
+    "generation_args": {
+        "input_tokens": 512,
+        "output_tokens": 128,
+        "batch_size": 1,
+        "kv_cache_type": "SLAB_POOL",
+        "do_sample": false,
+        "manual_seed": 0
+    },
+    "num_runs": 10,
+    "warmup_runs": 2,
+    "benchmark_results": [
+        {
+            "framework": "pace",
+            "metrics": {
+                "total_tokens": 6400,
+                "total_gen_tokens": 1280,
+                "average_gen_time": 8.052945363661275,
+                "average_latency_per_token": 0.012582727130720742,
+                "total_tps": 79.4740273401065,
+                "output_tps": 15.8948054680213,
+                "generation_times": [
+                    8.00317765166983,
+                    8.016551930923015,
+                    8.009642933029681,
+                    8.021388377994299,
+                    8.010498286224902,
+                    8.316154244355857,
+                    8.096790682990104,
+                    8.041340623050928,
+                    7.975020387209952,
+                    8.038888519164175
+                ],
+                "average_ttft": null,
+                "time_per_tokens": null,
+                "mean_accepted_tokens": null
+            },
+            "system_metrics": null
+        }
+    ]
+}
