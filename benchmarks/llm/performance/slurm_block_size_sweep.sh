@@ -22,10 +22,10 @@ BENCH_DIR="${PACE_REPO}/benchmarks/llm/performance"
 SPEC="${PACE_SWEEP_SPEC:-${BENCH_DIR}/block_size_sweep_decode.json}"
 SCRATCH_ROOT="${PACE_SCRATCH_ROOT:-/data/scratch/${USER}/pace-block-size}"
 RUN_NAME="${PACE_RUN_NAME:-${SLURM_JOB_ID}}"
-RESULT_DIR="${SCRATCH_ROOT}/results/${RUN_NAME}"
+RESULT_DIR="${PACE_RESULT_DIR:-${PACE_REPO}/benchmark_results/block-size/${RUN_NAME}}"
 
-# Keep large Hugging Face/model caches and temporary files out of the 20 GB
-# home allocation. Scratch is cleaned periodically, so copy valuable results out.
+# Keep only large Hugging Face/model caches and temporary files in scratch.
+# Benchmark outputs stay in the repository under benchmark_results/block-size.
 export HF_HOME="${SCRATCH_ROOT}/huggingface"
 export TORCH_HOME="${SCRATCH_ROOT}/torch"
 export TMPDIR="${SCRATCH_ROOT}/tmp/${SLURM_JOB_ID}"
@@ -115,4 +115,4 @@ fi
     --output-dir "${RESULT_DIR}"
 
 echo "finished=$(date --iso-8601=seconds)"
-echo "Copy ${RESULT_DIR} to persistent storage before the weekly scratch cleanup."
+echo "Results are available at ${RESULT_DIR}."

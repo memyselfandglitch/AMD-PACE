@@ -30,13 +30,17 @@ HERE = Path(__file__).resolve().parent
 BENCHMARK = HERE / "benchmark_llm_offline.py"
 FIELDS = (
     "model_class", "model_name", "framework", "phase", "requested_block_size",
-    "effective_block_size", "input_tokens", "output_tokens", "batch_size",
+    "effective_block_size", "auto_block_size", "input_tokens", "output_tokens", "batch_size",
     "kv_cache_type", "warmup_runs", "measured_runs", "mean_generation_latency_ms",
     "median_generation_latency_ms", "p95_generation_latency_ms",
     "minimum_generation_latency_ms", "maximum_generation_latency_ms", "output_tps",
     "average_latency_per_token_ms", "recommended_block_size", "is_recommended",
     "rank_by_median", "margin_over_runner_up_pct", "recommended_p95_not_worse",
     "recommendation_stable", "result_file",
+)
+COMPACT_FIELDS = (
+    "model_class", "input_sequence_length", "batch_size", "block_size",
+    "auto_block_size", "median_latency_ms", "p95_latency_ms", "best_block_size",
 )
 
 
@@ -156,6 +160,7 @@ def row_from_result(path, model, framework, block_size, l2_bytes):
         "phase": "decode_generation",
         "requested_block_size": "auto" if block_size is None else block_size,
         "effective_block_size": effective_block_size(model, block_size, l2_bytes),
+        "auto_block_size": effective_block_size(model, None, l2_bytes),
         "input_tokens": generation["input_tokens"],
         "output_tokens": generation["output_tokens"],
         "batch_size": generation["batch_size"],
@@ -237,14 +242,44 @@ def annotate_recommendations(rows, expected_fixed_sizes, min_margin_pct):
     return rows
 
 
-def write_csv(path: Path, rows):
+def compact_rows(rows):
+    projected = [
+        {
+            "model_class": row["model_class"],
+            "input_sequence_length": row["input_tokens"],
+            "batch_size": row["batch_size"],
+            "block_size": row["effective_block_size"],
+            "auto_block_size": row["auto_block_size"],
+            "median_latency_ms": row["median_generation_latency_ms"],
+            "p95_latency_ms": row["p95_generation_latency_ms"],
+            "best_block_size": row["recommended_block_size"],
+        }
+        for row in rows
+    ]
+    return sorted(
+        projected,
+        key=lambda row: (
+            row["model_class"], int(row["input_sequence_length"]),
+            int(row["batch_size"]), int(row["block_size"]),
+        ),
+    )
+
+
+def write_csv(path: Path, rows, fieldnames=FIELDS):
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
     with temporary.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=FIELDS)
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
     temporary.replace(path)
+
+
+def write_results(path: Path, rows, compact: bool):
+    if compact:
+        write_csv(path, compact_rows(rows), COMPACT_FIELDS)
+    else:
+        write_csv(path, rows)
 
 
 def run(args):
@@ -259,6 +294,7 @@ def run(args):
     expected_fixed_sizes = {
         int(value) for value in spec["axes"]["block_sizes"] if value is not None
     }
+    compact = bool(spec.get("compact_results", False))
 
     metadata = {
         "spec": str(args.spec.resolve()), "platform": platform.platform(),
@@ -280,7 +316,7 @@ def run(args):
         if prior and not args.rerun:
             rows.append(row_from_result(prior[-1], model, framework, block_size, l2_bytes))
             annotate_recommendations(rows, expected_fixed_sizes, args.min_margin_pct)
-            write_csv(output_dir / "results.csv", rows)
+            write_results(output_dir / "results.csv", rows, compact)
             continue
 
         config = make_benchmark_config(
@@ -318,12 +354,12 @@ def run(args):
             else:
                 rows.append(row_from_result(result_files[-1], model, framework, block_size, l2_bytes))
                 annotate_recommendations(rows, expected_fixed_sizes, args.min_margin_pct)
-                write_csv(output_dir / "results.csv", rows)
+                write_results(output_dir / "results.csv", rows, compact)
         finally:
             Path(config_path).unlink(missing_ok=True)
 
     annotate_recommendations(rows, expected_fixed_sizes, args.min_margin_pct)
-    write_csv(output_dir / "results.csv", rows)
+    write_results(output_dir / "results.csv", rows, compact)
     (output_dir / "failures.json").write_text(json.dumps(failures, indent=2) + "\n")
     print(f"Wrote {len(rows)} results to {output_dir / 'results.csv'}")
     return 1 if failures else 0

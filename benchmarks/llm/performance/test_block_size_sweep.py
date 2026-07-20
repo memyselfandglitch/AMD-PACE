@@ -1,6 +1,6 @@
 import unittest
 
-from block_size_sweep import annotate_recommendations, percentile
+from block_size_sweep import annotate_recommendations, compact_rows, percentile
 
 
 def result_row(block_size, median_ms, p95_ms):
@@ -11,6 +11,7 @@ def result_row(block_size, median_ms, p95_ms):
         "phase": "decode_generation",
         "requested_block_size": block_size,
         "effective_block_size": block_size,
+        "auto_block_size": 128,
         "input_tokens": 512,
         "output_tokens": 128,
         "batch_size": 1,
@@ -43,6 +44,26 @@ class TestBlockSizeSweep(unittest.TestCase):
         rows = [result_row(16, 12.0, 12.5), result_row(32, 11.0, 11.5)]
         annotate_recommendations(rows, {16, 32, 64, 128, 256}, 5.0)
         self.assertTrue(all(row["recommended_block_size"] == "" for row in rows))
+
+    def test_compact_results_contain_only_requested_dimensions_and_latency(self):
+        rows = [
+            result_row(64, 10.0, 10.5),
+            result_row(32, 11.0, 11.5),
+        ]
+        for row in rows:
+            row["recommended_block_size"] = 64
+        compact = compact_rows(rows)
+        self.assertEqual(compact[0]["block_size"], 32)
+        self.assertEqual(compact[0]["auto_block_size"], 128)
+        self.assertEqual(compact[0]["best_block_size"], 64)
+        self.assertEqual(
+            set(compact[0]),
+            {
+                "model_class", "input_sequence_length", "batch_size",
+                "block_size", "auto_block_size", "median_latency_ms",
+                "p95_latency_ms", "best_block_size",
+            },
+        )
 
 
 if __name__ == "__main__":
