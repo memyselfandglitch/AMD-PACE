@@ -139,6 +139,7 @@ def calculate_metrics(
         average_latency_per_token=average_latency_per_token,
         total_tps=total_tps,
         output_tps=output_tps,
+        generation_times=list(total_generation_times),
         average_ttft=average_ttft,
         time_per_tokens=time_per_tokens,
         mean_accepted_tokens=mean_accepted_tokens,

@@ -143,6 +143,24 @@ python block_size_sweep.py summarize \
   --min-margin-pct 3
 ```
 
+Generate a latency table directly from every raw result JSON with:
+
+```bash
+python benchmarks/llm/performance/analyze_block_size_latency.py \
+  benchmark_results/block-size/7055 \
+  --l2-cache-kib 1024
+```
+
+This creates `analysis/latency_summary.csv`, with one row per workload and
+requested block size, and `analysis/best_latency_by_workload.csv`, which picks
+the lowest measured mean for each workload. The summary includes both the
+requested block size and the effective block size selected for `auto`. New
+benchmark files retain all timed `generation_times`, allowing the script to
+calculate their minimum, mean, and p95. Older job 7055 files contain only the
+five-run aggregate mean; the script retains that mean and deliberately leaves
+minimum and p95 empty instead of treating block-size variants as repeat
+samples.
+
 The summary marks a winner stable only if its output-token throughput is at
 least 3% above the runner-up. Treat other cells as ties and prefer `auto` (or
 the larger block if reducing allocator metadata matters). Before encoding an

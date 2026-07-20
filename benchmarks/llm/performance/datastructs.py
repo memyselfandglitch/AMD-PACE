@@ -129,6 +129,9 @@ class Metrics(BaseData):
     average_latency_per_token: float
     total_tps: float
     output_tps: float
+    # Preserve every timed generation so distribution statistics such as
+    # minimum and p95 can be computed after the benchmark finishes.
+    generation_times: Optional[List[float]] = None
     average_ttft: Optional[float] = None
     time_per_tokens: Optional[List[float]] = None
     mean_accepted_tokens: Optional[float] = None

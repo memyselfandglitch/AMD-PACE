@@ -19,7 +19,7 @@ set -euo pipefail
 # submitting from elsewhere: sbatch --export=ALL,PACE_REPO=/path/to/AMD-PACE ...
 PACE_REPO="${PACE_REPO:-${SLURM_SUBMIT_DIR}}"
 BENCH_DIR="${PACE_REPO}/benchmarks/llm/performance"
-SPEC="${PACE_SWEEP_SPEC:-${BENCH_DIR}/block_size_sweep_quick.json}"
+SPEC="${PACE_SWEEP_SPEC:-${BENCH_DIR}/block_size_sweep_decode.json}"
 SCRATCH_ROOT="${PACE_SCRATCH_ROOT:-/data/scratch/${USER}/pace-block-size}"
 RUN_NAME="${PACE_RUN_NAME:-${SLURM_JOB_ID}}"
 RESULT_DIR="${SCRATCH_ROOT}/results/${RUN_NAME}"
@@ -113,10 +113,6 @@ fi
 "${NUMA_PREFIX[@]}" "${PYTHON_BIN}" -u block_size_sweep.py run \
     --spec "${SPEC}" \
     --output-dir "${RESULT_DIR}"
-
-"${PYTHON_BIN}" -u block_size_sweep.py summarize \
-    --results "${RESULT_DIR}/results.csv" \
-    --min-margin-pct 3
 
 echo "finished=$(date --iso-8601=seconds)"
 echo "Copy ${RESULT_DIR} to persistent storage before the weekly scratch cleanup."

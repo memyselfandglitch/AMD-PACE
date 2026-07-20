@@ -1,0 +1,39 @@
+{
+    "models": [
+        {
+            "class": "SLM",
+            "name": "Qwen/Qwen2.5-0.5B",
+            "dtype": "bf16",
+            "num_kv_heads": 2,
+            "head_dim": 64
+        },
+        {
+            "class": "LLM",
+            "name": "Qwen/Qwen2.5-7B-Instruct",
+            "dtype": "bf16",
+            "num_kv_heads": 4,
+            "head_dim": 128
+        }
+    ],
+    "frameworks": ["pace"],
+    "axes": {
+        "block_sizes": [null, 16, 32, 64, 128, 256],
+        "input_tokens": [128, 512, 2048, 8192],
+        "output_tokens": [128],
+        "batch_sizes": [1]
+    },
+    "warmup_runs": 2,
+    "num_runs": 10,
+    "randomize_block_order": true,
+    "order_seed": 20260720,
+    "use_real_data": false,
+    "manual_seed": 0,
+    "llm_operators": {
+        "Norm": "JIT",
+        "QKVProjection": "TPP",
+        "Attention": "JIT",
+        "OutProjection": "TPP",
+        "MLP": "TPP",
+        "LMHead": "TPP"
+    }
+}
