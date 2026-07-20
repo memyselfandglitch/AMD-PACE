@@ -119,6 +119,11 @@ python block_size_sweep.py run \
   --dry-run
 ```
 
+The default quick spec uses gated Meta Llama repositories. For a sweep based on
+official, ungated Qwen models already supported elsewhere in this repository,
+use `block_size_sweep_qwen.json`. It compares Qwen2.5 0.5B and 7B-Instruct with
+the same axes.
+
 Run it on an otherwise idle, performance-configured AMD host:
 
 ```bash
