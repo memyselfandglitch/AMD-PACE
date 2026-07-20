@@ -180,7 +180,9 @@ sbatch --partition=CPU_PARTITION \
 Monitor or cancel the job with `squeue -j JOB_ID` and `scancel JOB_ID`. The job
 requests one exclusive node, 96 physical cores, 512 GB RAM, and 24 hours,
 writes Slurm logs in the submission directory, pins OpenMP workers to cores,
-and stores models plus measurements under `/scratch/$USER/pace-block-size`.
+and stores models plus measurements under
+`/data/scratch/$USER/pace-block-size`. Override this location with
+`--export=ALL,PACE_SCRATCH_ROOT=/another/path` if needed.
 `--exclusive` prevents Slurm from placing another job on the node even though
 the benchmark requests fewer logical CPUs than the machine exposes. At startup
 the script also queries `squeue` for the assigned node and aborts if it sees a

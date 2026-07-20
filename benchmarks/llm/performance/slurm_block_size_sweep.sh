@@ -20,12 +20,12 @@ set -euo pipefail
 PACE_REPO="${PACE_REPO:-${SLURM_SUBMIT_DIR}}"
 BENCH_DIR="${PACE_REPO}/benchmarks/llm/performance"
 SPEC="${PACE_SWEEP_SPEC:-${BENCH_DIR}/block_size_sweep_quick.json}"
-SCRATCH_ROOT="/scratch/${USER}/pace-block-size"
+SCRATCH_ROOT="${PACE_SCRATCH_ROOT:-/data/scratch/${USER}/pace-block-size}"
 RUN_NAME="${PACE_RUN_NAME:-${SLURM_JOB_ID}}"
 RESULT_DIR="${SCRATCH_ROOT}/results/${RUN_NAME}"
 
 # Keep large Hugging Face/model caches and temporary files out of the 20 GB
-# home allocation. /scratch is cleaned weekly, so copy valuable results out.
+# home allocation. Scratch is cleaned periodically, so copy valuable results out.
 export HF_HOME="${SCRATCH_ROOT}/huggingface"
 export TORCH_HOME="${SCRATCH_ROOT}/torch"
 export TMPDIR="${SCRATCH_ROOT}/tmp/${SLURM_JOB_ID}"
