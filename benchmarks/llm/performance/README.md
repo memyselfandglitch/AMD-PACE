@@ -110,12 +110,17 @@ prompt length, decode length, batch size, and KV block size. `null` in the
 `vllm_zentorch`). Every point uses `SLAB_POOL`, greedy decoding, and a fresh
 process so an earlier model initialization cannot leak into another point.
 
-Start by inspecting the 60-point SLM/LLM matrix:
+The decode-focused specification uses Qwen2.5 0.5B as the SLM and Qwen2.5
+7B-Instruct as the LLM. It tests input lengths 128, 512, 2,048, and 8,192 with
+block sizes 16 through 256 plus the current `auto` policy. Each point performs
+two warmups and ten measured runs, and block order is randomized per workload.
+
+Inspect the 48-point matrix without loading either model:
 
 ```bash
 python block_size_sweep.py run \
-  --spec block_size_sweep_quick.json \
-  --output-dir benchmark_results/block_size_quick \
+  --spec block_size_sweep_decode.json \
+  --output-dir benchmark_results/block_size_decode \
   --dry-run
 ```
 
@@ -128,20 +133,19 @@ Run it on an otherwise idle, performance-configured AMD host:
 
 ```bash
 python block_size_sweep.py run \
-  --spec block_size_sweep_quick.json \
-  --output-dir benchmark_results/block_size_quick \
+  --spec block_size_sweep_decode.json \
+  --output-dir benchmark_results/block_size_decode \
   --keep-going
 ```
 
 Completed points are reused when the same command is restarted. Pass `--rerun`
 to replace them. Raw JSON and logs are retained per point, while `results.csv`
-is updated after every success. To select per-workload winners:
-
-```bash
-python block_size_sweep.py summarize \
-  --results benchmark_results/block_size_quick/results.csv \
-  --min-margin-pct 3
-```
+is updated after every success. No post-processing command is required. Once
+all fixed block sizes for a workload finish, the same CSV reports mean, median,
+minimum, maximum, and p95 generation latency in milliseconds; ranks all fixed
+block sizes by median; and fills in the recommended block size. A recommendation
+is marked stable only when its median is at least 5% ahead of the runner-up and
+its p95 is not worse.
 
 Generate a latency table directly from every raw result JSON with:
 
@@ -161,11 +165,9 @@ five-run aggregate mean; the script retains that mean and deliberately leaves
 minimum and p95 empty instead of treating block-size variants as repeat
 samples.
 
-The summary marks a winner stable only if its output-token throughput is at
-least 3% above the runner-up. Treat other cells as ties and prefer `auto` (or
-the larger block if reducing allocator metadata matters). Before encoding an
-auto-tuning rule, repeat stable candidates in randomized order and add prompt
-lengths near observed crossover points. Useful second-stage axes are input
+Treat recommendations without the stability flag as ties rather than tuning
+rules. Before encoding an auto-tuning rule, repeat stable candidates and add
+prompt lengths near observed crossover points. Useful second-stage axes are input
 lengths `[64, 128, 256, 512, 1024, 2048, 4096, 8192]`, batch sizes
 `[1, 2, 4, 8]`, and output lengths `[32, 128, 512]`. Keep CPU affinity, NUMA
 placement, thread counts, memory policy, model revision, and machine firmware
