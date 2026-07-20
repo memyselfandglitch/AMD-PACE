@@ -1,0 +1,7 @@
+{
+  "spec": "/data/scratch/deveshisingh/AMD-PACE/benchmarks/llm/performance/block_size_sweep_qwen.json",
+  "platform": "Linux-6.2.0-39-generic-x86_64-with-glibc2.37",
+  "processor": "x86_64",
+  "python": "3.12.13 | packaged by conda-forge | (main, Mar  5 2026, 16:50:00) [GCC 14.3.0]",
+  "command": "block_size_sweep.py run --spec /data/scratch/deveshisingh/AMD-PACE/benchmarks/llm/performance/block_size_sweep_qwen.json --output-dir /data/scratch/deveshisingh/pace-block-size/results/7055"
+}

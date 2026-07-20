@@ -1,0 +1,13 @@
+model_class,model_name,framework,input_tokens,output_tokens,batch_size,recommended_block_size,output_tps,margin_over_runner_up_pct,stable_winner
+LLM,Qwen/Qwen2.5-7B-Instruct,pace,128,128,1,128,16.964982281315052,0.04,False
+LLM,Qwen/Qwen2.5-7B-Instruct,pace,128,128,4,32,61.97471698675903,1.22,False
+LLM,Qwen/Qwen2.5-7B-Instruct,pace,2048,128,1,32,12.640263093609628,1.38,False
+LLM,Qwen/Qwen2.5-7B-Instruct,pace,2048,128,4,256,21.453013944510563,0.06,False
+LLM,Qwen/Qwen2.5-7B-Instruct,pace,512,128,1,32,15.98714758666029,0.09,False
+LLM,Qwen/Qwen2.5-7B-Instruct,pace,512,128,4,32,50.230211508840654,0.47,False
+SLM,Qwen/Qwen2.5-0.5B,pace,128,128,1,32,92.0476398084005,0.1,False
+SLM,Qwen/Qwen2.5-0.5B,pace,128,128,4,256,305.3328114628447,0.04,False
+SLM,Qwen/Qwen2.5-0.5B,pace,2048,128,1,128,67.2201527790444,0.11,False
+SLM,Qwen/Qwen2.5-0.5B,pace,2048,128,4,128,151.94667659187468,0.15,False
+SLM,Qwen/Qwen2.5-0.5B,pace,512,128,1,auto,86.22509648263856,0.66,False
+SLM,Qwen/Qwen2.5-0.5B,pace,512,128,4,auto,263.7193760350267,0.81,False

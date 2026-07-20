@@ -1,0 +1,27 @@
+20-Jul-26 19:10:19.484 I benchmark_llm_offline.py:395 pace-llm-benchmark: Running benchmark for model: Qwen/Qwen2.5-0.5B using pace framework
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+20-Jul-26 19:10:21.129 I data.py:70 pace-llm-benchmark: Generating random input of 128 tokens for 1 samples
+20-Jul-26 19:10:21.219 I data.py:51 pace-llm-benchmark: Data generator initialized with 1 samples
+
+Loading checkpoints:   0%|          | 0/1 [00:00<?, ?it/s]
+Loading checkpoints: 100%|██████████| 1/1 [00:00<00:00, 12.77it/s]
+20-Jul-26 19:10:22.637 I benchmark_llm_offline.py:453 pace-llm-benchmark: Performing warm-up runs...
+
+Warming up:   0%|          | 0/2 [00:00<?, ?it/s]
+Warming up:  50%|█████     | 1/2 [00:01<00:01,  1.42s/it]
+Warming up: 100%|██████████| 2/2 [00:02<00:00,  1.40s/it]
+Warming up: 100%|██████████| 2/2 [00:02<00:00,  1.40s/it]
+20-Jul-26 19:10:25.446 I benchmark_llm_offline.py:456 pace-llm-benchmark: Warm-up complete.
+20-Jul-26 19:10:25.446 I benchmark_llm_offline.py:459 pace-llm-benchmark: Starting timed runs...
+
+Benchmarking:   0%|          | 0/5 [00:00<?, ?it/s]
+Benchmarking:  20%|██        | 1/5 [00:01<00:05,  1.39s/it]
+Benchmarking:  40%|████      | 2/5 [00:02<00:04,  1.41s/it]
+Benchmarking:  60%|██████    | 3/5 [00:04<00:02,  1.40s/it]
+Benchmarking:  80%|████████  | 4/5 [00:05<00:01,  1.39s/it]
+Benchmarking: 100%|██████████| 5/5 [00:06<00:00,  1.39s/it]
+Benchmarking: 100%|██████████| 5/5 [00:06<00:00,  1.39s/it]
+20-Jul-26 19:10:32.407 I benchmark_llm_offline.py:464 pace-llm-benchmark: Timed runs complete.
+20-Jul-26 19:10:37.678 I benchmark_llm_offline.py:529 pace-llm-benchmark: Results saved to: /data/scratch/deveshisingh/pace-block-size/results/7055/raw/SLM_b256_i128_o128_n1_pace/pace_Qwen--Qwen2.5-0.5B_torch.bfloat16_bs1_it128_nt128_20260720_191037_results.json
+20-Jul-26 19:10:22.183 W configs.py:562 pace-llm : Attention backend 'jit' is incompatible with cache type 'slab_pool'. Overriding to 'slab'.
+20-Jul-26 19:10:22.184 I model_utils.py:201 pace-llm : Creating the model: Qwen2ForCausalLM
