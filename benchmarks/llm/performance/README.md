@@ -101,6 +101,112 @@ To run the benchmarking script, use the following command:
 python benchmark_llm_offline.py --config /path/to/config.json
 ```
 
+### Decode block-size sweep
+
+`block_size_sweep.py` runs isolated SlabPool experiments across model class,
+prompt length, decode length, batch size, and KV block size. `null` in the
+`block_sizes` axis means the existing L2-based auto-tuner; explicit values set
+`SLAB_BLOCK_SIZE` for PACE (`PACE_VLLM_SLAB_BLOCK_SIZE` for
+`vllm_zentorch`). Every point uses `SLAB_POOL`, greedy decoding, and a fresh
+process so an earlier model initialization cannot leak into another point.
+
+Start by inspecting the 60-point SLM/LLM matrix:
+
+```bash
+python block_size_sweep.py run \
+  --spec block_size_sweep_quick.json \
+  --output-dir benchmark_results/block_size_quick \
+  --dry-run
+```
+
+Run it on an otherwise idle, performance-configured AMD host:
+
+```bash
+python block_size_sweep.py run \
+  --spec block_size_sweep_quick.json \
+  --output-dir benchmark_results/block_size_quick \
+  --keep-going
+```
+
+Completed points are reused when the same command is restarted. Pass `--rerun`
+to replace them. Raw JSON and logs are retained per point, while `results.csv`
+is updated after every success. To select per-workload winners:
+
+```bash
+python block_size_sweep.py summarize \
+  --results benchmark_results/block_size_quick/results.csv \
+  --min-margin-pct 3
+```
+
+The summary marks a winner stable only if its output-token throughput is at
+least 3% above the runner-up. Treat other cells as ties and prefer `auto` (or
+the larger block if reducing allocator metadata matters). Before encoding an
+auto-tuning rule, repeat stable candidates in randomized order and add prompt
+lengths near observed crossover points. Useful second-stage axes are input
+lengths `[64, 128, 256, 512, 1024, 2048, 4096, 8192]`, batch sizes
+`[1, 2, 4, 8]`, and output lengths `[32, 128, 512]`. Keep CPU affinity, NUMA
+placement, thread counts, memory policy, model revision, and machine firmware
+fixed and record them alongside the output directory.
+
+#### AMD cluster / Slurm submission
+
+The supplied cluster policy requires every workload to run through Slurm and
+forbids CPU-only jobs in GPU queues. The cluster document names GPU partitions
+but does not identify the CPU partition, so first inspect the live scheduler:
+
+```bash
+sinfo -o '%P %a %l %D %C %G'
+```
+
+Choose a partition with CPU capacity and no GPU allocation, then submit the
+provided single-node EPYC job from the repository root. Replace
+`CPU_PARTITION` with that partition's exact name; do **not** use `GPU` or
+`jobgn01` for this benchmark.
+
+```bash
+sbatch --partition=CPU_PARTITION \
+  benchmarks/llm/performance/slurm_block_size_sweep.sh
+```
+
+If the PACE Python environment is not already active, pass its activation
+script. A venv example is:
+
+```bash
+sbatch --partition=CPU_PARTITION \
+  --export=ALL,PACE_ACTIVATE=/path/to/venv/bin/activate \
+  benchmarks/llm/performance/slurm_block_size_sweep.sh
+```
+
+Monitor or cancel the job with `squeue -j JOB_ID` and `scancel JOB_ID`. The job
+requests one exclusive node, 96 physical cores, 512 GB RAM, and 24 hours,
+writes Slurm logs in the submission directory, pins OpenMP workers to cores,
+and stores models plus measurements under `/scratch/$USER/pace-block-size`.
+`--exclusive` prevents Slurm from placing another job on the node even though
+the benchmark requests fewer logical CPUs than the machine exposes. At startup
+the script also queries `squeue` for the assigned node and aborts if it sees a
+different running allocation. To check manually after the job starts:
+
+```bash
+NODE=$(squeue -h -j JOB_ID -o '%N')
+squeue -w "$NODE" -t RUNNING -o '%.18i %.12u %.12P %.10T %.6C %R'
+scontrol show job JOB_ID | grep -E 'NodeList=|Shared='
+```
+
+Only the benchmark job should appear in the node-filtered `squeue` output.
+Slurm exclusivity does not stop kernel threads, system services, or a process
+improperly launched outside Slurm, so the script records the 20 busiest
+processes in its log before benchmarking. If unexplained CPU use remains,
+retain the log and ask the administrator rather than killing another user's
+processes. Partition `OverSubscribe` policy can override job sharing options;
+inspect it with `scontrol show partition CPU_PARTITION` and confirm the
+exclusive request with the cluster administrator if another allocation ever
+appears.
+
+Scratch is cleaned weekly on this cluster, so copy the result directory to
+persistent storage after the run. If the CPU partition exposes fewer than 96
+cores or has different memory/time limits, adjust the corresponding `#SBATCH`
+lines before submitting.
+
 ## Benchmarking Infrastructure
 
 ### Data Generator
