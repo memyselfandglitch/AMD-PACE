@@ -1,0 +1,11 @@
+{
+  "spec": "/data/scratch/deveshisingh/AMD-PACE/benchmarks/llm/performance/block_size_sweep_small.json",
+  "platform": "Linux-6.2.0-39-generic-x86_64-with-glibc2.37",
+  "processor": "x86_64",
+  "python": "3.11.4 (main, Dec  7 2023, 15:43:41) [GCC 12.3.0]",
+  "command": "block_size_sweep.py run --spec /data/scratch/deveshisingh/AMD-PACE/benchmarks/llm/performance/block_size_sweep_small.json --output-dir /data/scratch/deveshisingh/AMD-PACE/benchmark_results/block-size/7060",
+  "warmup_runs": 2,
+  "measured_runs": 20,
+  "selection_metric": "median_generation_latency_ms",
+  "l2_size_bytes": 1048576
+}

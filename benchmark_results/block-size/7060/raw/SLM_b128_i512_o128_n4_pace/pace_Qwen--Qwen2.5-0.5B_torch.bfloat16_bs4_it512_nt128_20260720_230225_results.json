@@ -1,0 +1,64 @@
+{
+    "model_args": {
+        "model_name": "Qwen/Qwen2.5-0.5B",
+        "dtype": "torch.bfloat16",
+        "llm_operators": {
+            "norm": "jit",
+            "qkvprojection": "tpp",
+            "attention": "jit",
+            "outprojection": "tpp",
+            "mlp": "tpp",
+            "lmhead": "tpp"
+        },
+        "spec_config": null
+    },
+    "generation_args": {
+        "input_tokens": 512,
+        "output_tokens": 128,
+        "batch_size": 4,
+        "kv_cache_type": "SLAB_POOL",
+        "do_sample": false,
+        "manual_seed": 0
+    },
+    "num_runs": 20,
+    "warmup_runs": 2,
+    "benchmark_results": [
+        {
+            "framework": "pace",
+            "metrics": {
+                "total_tokens": 51200,
+                "total_gen_tokens": 10240,
+                "average_gen_time": 1.8954649208579213,
+                "average_latency_per_token": 0.0007404159847101255,
+                "total_tps": 1350.5921274667,
+                "output_tps": 270.11842549334,
+                "generation_times": [
+                    1.8872548267245293,
+                    1.8908488531596959,
+                    1.9005704591982067,
+                    1.9039887790568173,
+                    1.886167628224939,
+                    1.8958806609734893,
+                    1.8996242117136717,
+                    1.8947499161586165,
+                    1.8862234097905457,
+                    1.8861703439615667,
+                    1.8958767177537084,
+                    1.890227252151817,
+                    1.8881053160876036,
+                    1.9005544469691813,
+                    1.9030704977922142,
+                    1.9032348478212953,
+                    1.9004326360300183,
+                    1.9029010343365371,
+                    1.9052424803376198,
+                    1.8881740989163518
+                ],
+                "average_ttft": null,
+                "time_per_tokens": null,
+                "mean_accepted_tokens": null
+            },
+            "system_metrics": null
+        }
+    ]
+}

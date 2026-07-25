@@ -1,0 +1,46 @@
+21-Jul-26 00:17:31.833 I benchmark_llm_offline.py:395 pace-llm-benchmark: Running benchmark for model: Qwen/Qwen2.5-7B-Instruct using pace framework
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+21-Jul-26 00:17:33.501 I data.py:70 pace-llm-benchmark: Generating random input of 512 tokens for 4 samples
+21-Jul-26 00:17:33.562 I data.py:51 pace-llm-benchmark: Data generator initialized with 1 samples
+
+Loading checkpoints:   0%|          | 0/4 [00:00<?, ?it/s]
+Loading checkpoints:  25%|██▌       | 1/4 [00:00<00:00,  6.26it/s]
+Loading checkpoints:  50%|█████     | 2/4 [00:00<00:00,  7.28it/s]
+Loading checkpoints:  75%|███████▌  | 3/4 [00:00<00:00,  7.66it/s]
+Loading checkpoints: 100%|██████████| 4/4 [00:00<00:00,  8.02it/s]
+Loading checkpoints: 100%|██████████| 4/4 [00:00<00:00,  7.70it/s]
+21-Jul-26 00:17:37.590 I benchmark_llm_offline.py:453 pace-llm-benchmark: Performing warm-up runs...
+
+Warming up:   0%|          | 0/2 [00:00<?, ?it/s]
+Warming up:  50%|█████     | 1/2 [00:10<00:10, 10.59s/it]
+Warming up: 100%|██████████| 2/2 [00:20<00:00, 10.37s/it]
+Warming up: 100%|██████████| 2/2 [00:20<00:00, 10.40s/it]
+21-Jul-26 00:17:58.396 I benchmark_llm_offline.py:456 pace-llm-benchmark: Warm-up complete.
+21-Jul-26 00:17:58.396 I benchmark_llm_offline.py:459 pace-llm-benchmark: Starting timed runs...
+
+Benchmarking:   0%|          | 0/20 [00:00<?, ?it/s]
+Benchmarking:   5%|▌         | 1/20 [00:10<03:13, 10.19s/it]
+Benchmarking:  10%|█         | 2/20 [00:20<03:03, 10.17s/it]
+Benchmarking:  15%|█▌        | 3/20 [00:30<02:53, 10.18s/it]
+Benchmarking:  20%|██        | 4/20 [00:40<02:43, 10.20s/it]
+Benchmarking:  25%|██▌       | 5/20 [00:50<02:32, 10.19s/it]
+Benchmarking:  30%|███       | 6/20 [01:01<02:22, 10.19s/it]
+Benchmarking:  35%|███▌      | 7/20 [01:11<02:12, 10.19s/it]
+Benchmarking:  40%|████      | 8/20 [01:21<02:02, 10.19s/it]
+Benchmarking:  45%|████▌     | 9/20 [01:31<01:52, 10.21s/it]
+Benchmarking:  50%|█████     | 10/20 [01:41<01:42, 10.21s/it]
+Benchmarking:  55%|█████▌    | 11/20 [01:52<01:31, 10.19s/it]
+Benchmarking:  60%|██████    | 12/20 [02:02<01:21, 10.19s/it]
+Benchmarking:  65%|██████▌   | 13/20 [02:12<01:11, 10.19s/it]
+Benchmarking:  70%|███████   | 14/20 [02:22<01:01, 10.20s/it]
+Benchmarking:  75%|███████▌  | 15/20 [02:32<00:50, 10.19s/it]
+Benchmarking:  80%|████████  | 16/20 [02:43<00:40, 10.18s/it]
+Benchmarking:  85%|████████▌ | 17/20 [02:53<00:30, 10.17s/it]
+Benchmarking:  90%|█████████ | 18/20 [03:03<00:20, 10.17s/it]
+Benchmarking:  95%|█████████▌| 19/20 [03:13<00:10, 10.16s/it]
+Benchmarking: 100%|██████████| 20/20 [03:23<00:00, 10.17s/it]
+Benchmarking: 100%|██████████| 20/20 [03:23<00:00, 10.19s/it]
+21-Jul-26 00:21:22.103 I benchmark_llm_offline.py:464 pace-llm-benchmark: Timed runs complete.
+21-Jul-26 00:21:28.207 I benchmark_llm_offline.py:529 pace-llm-benchmark: Results saved to: /data/scratch/deveshisingh/AMD-PACE/benchmark_results/block-size/7060/raw/LLM_b256_i512_o128_n4_pace/pace_Qwen--Qwen2.5-7B-Instruct_torch.bfloat16_bs4_it512_nt128_20260721_002128_results.json
+21-Jul-26 00:17:34.608 W configs.py:562 pace-llm : Attention backend 'jit' is incompatible with cache type 'slab_pool'. Overriding to 'slab'.
+21-Jul-26 00:17:34.609 I model_utils.py:201 pace-llm : Creating the model: Qwen2ForCausalLM

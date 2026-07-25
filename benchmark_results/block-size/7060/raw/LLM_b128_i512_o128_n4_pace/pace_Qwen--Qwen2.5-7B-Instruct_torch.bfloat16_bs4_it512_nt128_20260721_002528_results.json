@@ -1,0 +1,64 @@
+{
+    "model_args": {
+        "model_name": "Qwen/Qwen2.5-7B-Instruct",
+        "dtype": "torch.bfloat16",
+        "llm_operators": {
+            "norm": "jit",
+            "qkvprojection": "tpp",
+            "attention": "jit",
+            "outprojection": "tpp",
+            "mlp": "tpp",
+            "lmhead": "tpp"
+        },
+        "spec_config": null
+    },
+    "generation_args": {
+        "input_tokens": 512,
+        "output_tokens": 128,
+        "batch_size": 4,
+        "kv_cache_type": "SLAB_POOL",
+        "do_sample": false,
+        "manual_seed": 0
+    },
+    "num_runs": 20,
+    "warmup_runs": 2,
+    "benchmark_results": [
+        {
+            "framework": "pace",
+            "metrics": {
+                "total_tokens": 51200,
+                "total_gen_tokens": 10240,
+                "average_gen_time": 10.196364174922929,
+                "average_latency_per_token": 0.0039829547558292685,
+                "total_tps": 251.06988688145304,
+                "output_tps": 50.213977376290615,
+                "generation_times": [
+                    10.218883232213557,
+                    10.219233771786094,
+                    10.189062057062984,
+                    10.209281721152365,
+                    10.171314723789692,
+                    10.186970565002412,
+                    10.271629101131111,
+                    10.196235031355172,
+                    10.30482366681099,
+                    10.197410366032273,
+                    10.139783192891628,
+                    10.228118079248816,
+                    10.24404793791473,
+                    10.14479166502133,
+                    10.135529753752053,
+                    10.173950179014355,
+                    10.17925291415304,
+                    10.183597702067345,
+                    10.185886254068464,
+                    10.147481583990157
+                ],
+                "average_ttft": null,
+                "time_per_tokens": null,
+                "mean_accepted_tokens": null
+            },
+            "system_metrics": null
+        }
+    ]
+}

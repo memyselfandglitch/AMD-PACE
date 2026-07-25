@@ -1,0 +1,64 @@
+{
+    "model_args": {
+        "model_name": "Qwen/Qwen2.5-0.5B",
+        "dtype": "torch.bfloat16",
+        "llm_operators": {
+            "norm": "jit",
+            "qkvprojection": "tpp",
+            "attention": "jit",
+            "outprojection": "tpp",
+            "mlp": "tpp",
+            "lmhead": "tpp"
+        },
+        "spec_config": null
+    },
+    "generation_args": {
+        "input_tokens": 2048,
+        "output_tokens": 128,
+        "batch_size": 1,
+        "kv_cache_type": "SLAB_POOL",
+        "do_sample": false,
+        "manual_seed": 0
+    },
+    "num_runs": 20,
+    "warmup_runs": 2,
+    "benchmark_results": [
+        {
+            "framework": "pace",
+            "metrics": {
+                "total_tokens": 43520,
+                "total_gen_tokens": 2560,
+                "average_gen_time": 1.8349888218101114,
+                "average_latency_per_token": 0.0008432853041406762,
+                "total_tps": 1185.8382863899415,
+                "output_tps": 69.75519331705537,
+                "generation_times": [
+                    1.8344880840741098,
+                    1.8308800770901144,
+                    1.8332225596532226,
+                    1.8293618019670248,
+                    1.8336261459626257,
+                    1.8274806812405586,
+                    1.841080131009221,
+                    1.8255170630291104,
+                    1.8346876199357212,
+                    1.8328745416365564,
+                    1.8329092329367995,
+                    1.829655691049993,
+                    1.8506072368472815,
+                    1.8346351720392704,
+                    1.8420945769175887,
+                    1.8344209138303995,
+                    1.836734393145889,
+                    1.8332210099324584,
+                    1.8388837440870702,
+                    1.8433957598172128
+                ],
+                "average_ttft": null,
+                "time_per_tokens": null,
+                "mean_accepted_tokens": null
+            },
+            "system_metrics": null
+        }
+    ]
+}

@@ -1,0 +1,64 @@
+{
+    "model_args": {
+        "model_name": "Qwen/Qwen2.5-7B-Instruct",
+        "dtype": "torch.bfloat16",
+        "llm_operators": {
+            "norm": "jit",
+            "qkvprojection": "tpp",
+            "attention": "jit",
+            "outprojection": "tpp",
+            "mlp": "tpp",
+            "lmhead": "tpp"
+        },
+        "spec_config": null
+    },
+    "generation_args": {
+        "input_tokens": 2048,
+        "output_tokens": 128,
+        "batch_size": 1,
+        "kv_cache_type": "SLAB_POOL",
+        "do_sample": false,
+        "manual_seed": 0
+    },
+    "num_runs": 20,
+    "warmup_runs": 2,
+    "benchmark_results": [
+        {
+            "framework": "pace",
+            "metrics": {
+                "total_tokens": 43520,
+                "total_gen_tokens": 2560,
+                "average_gen_time": 10.175338125484995,
+                "average_latency_per_token": 0.004676166417961854,
+                "total_tps": 213.85038739400943,
+                "output_tps": 12.57943455258879,
+                "generation_times": [
+                    10.19076168909669,
+                    10.22561938688159,
+                    10.136748760007322,
+                    10.113910117652267,
+                    10.283580655232072,
+                    10.15703299222514,
+                    10.080704682972282,
+                    10.143390347715467,
+                    10.21574438828975,
+                    10.233755032066256,
+                    10.104898795951158,
+                    10.24908296763897,
+                    10.263860776089132,
+                    10.133676675148308,
+                    10.130367892794311,
+                    10.185213549993932,
+                    10.18923205928877,
+                    10.196751352865249,
+                    10.133837467059493,
+                    10.138592920731753
+                ],
+                "average_ttft": null,
+                "time_per_tokens": null,
+                "mean_accepted_tokens": null
+            },
+            "system_metrics": null
+        }
+    ]
+}
