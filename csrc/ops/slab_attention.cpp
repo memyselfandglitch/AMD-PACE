@@ -180,6 +180,8 @@ TORCH_LIBRARY_FRAGMENT(pace, m) {
       .def("truncate_sequence", &Pool::truncate_sequence)
       .def("get_sequence_length", &Pool::get_sequence_length)
       .def("get_free_block_count", &Pool::get_free_block_count)
+      .def("set_stage_profile", &Pool::set_stage_profile)
+      .def("get_stage_profile", &Pool::get_stage_profile)
       .def("cache_update", checked_cache_update)
       .def("attention", checked_attention);
   // Pick the largest SlabPool block_size (from {32, 64, 128, 256}) whose

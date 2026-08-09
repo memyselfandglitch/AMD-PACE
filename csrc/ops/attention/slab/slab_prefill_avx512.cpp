@@ -13,6 +13,7 @@
 #include <ops/attention/slab/dpbf16_kernels.h>
 #include <ops/attention/slab/slab_kernels.h>
 #include <ops/exp_approx.h>
+#include <chrono>
 #include <cstring>
 #include <limits>
 
@@ -70,6 +71,27 @@ struct BrgemmCache {
 };
 
 static thread_local BrgemmCache tl_prefill_cache;
+
+using StageClock = std::chrono::steady_clock;
+
+template <bool Profile, typename Function>
+inline void measure_stage(
+    PrefillStageProfile* profile,
+    uint64_t PrefillStageProfile::*nanoseconds,
+    uint64_t PrefillStageProfile::*pairs,
+    Function&& function) {
+  if constexpr (Profile) {
+    const auto start = StageClock::now();
+    function();
+    const auto end = StageClock::now();
+    profile->*nanoseconds += static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(end - start)
+            .count());
+    ++(profile->*pairs);
+  } else {
+    function();
+  }
+}
 
 void init_brgemm_cache(
     BrgemmCache& c,
@@ -187,7 +209,8 @@ void init_brgemm_cache(
 
 } // anonymous namespace
 
-void prefill_tile(
+template <bool Profile>
+void prefill_tile_impl(
     const KernelCtx& ctx,
     int64_t kv_len,
     int64_t q_len,
@@ -195,7 +218,8 @@ void prefill_tile(
     const std::vector<int64_t>& block_indices,
     int64_t kv_h,
     int64_t qt,
-    int64_t query_tile) {
+    int64_t query_tile,
+    PrefillStageProfile* profile) {
   auto& c = tl_prefill_cache;
   const int64_t aq = std::min(q_len, kv_len);
   const int64_t qs = qt * query_tile;
@@ -209,55 +233,72 @@ void prefill_tile(
   const int64_t head_dim = ctx.head_dim;
   const int64_t blk_size = ctx.blk_size;
 
-  init_brgemm_cache(c, padded_tile_q, blk_size, head_dim, n_rep);
-  c.brg_qkt.set_hw_context();
+  if constexpr (Profile)
+    ++profile->work_items;
 
-  // Init per-rep accumulators (with optional sink bias)
-  for (int64_t r = 0; r < n_rep; ++r) {
-    std::fill(c.out_fp32[r], c.out_fp32[r] + padded_tile_q * c.hd_padded, 0.0f);
-    const int64_t qh = kv_h * n_rep + r;
-    const float sink_bias = ctx.has_sinks ? ctx.sinks_ptr[qh] : 0.0f;
-    if (sink_bias != 0.0f) {
-      std::fill(c.rmax_arr[r], c.rmax_arr[r] + padded_tile_q, sink_bias);
-      std::fill(c.rsum_arr[r], c.rsum_arr[r] + padded_tile_q, 1.0f);
-    } else {
-      std::fill(
-          c.rmax_arr[r],
-          c.rmax_arr[r] + padded_tile_q,
-          -std::numeric_limits<float>::infinity());
-      std::fill(c.rsum_arr[r], c.rsum_arr[r] + padded_tile_q, 0.0f);
-    }
-  }
+  measure_stage<Profile>(
+      profile,
+      &PrefillStageProfile::cache_init_ns,
+      &PrefillStageProfile::cache_init_pairs,
+      [&]() {
+        init_brgemm_cache(c, padded_tile_q, blk_size, head_dim, n_rep);
+        c.brg_qkt.set_hw_context();
+      });
 
-  // Copy Q tiles for all reps with pre-applied scale
   const int64_t q_base_offset = q_offset + qs;
-  const __m512 vscale = _mm512_set1_ps(ctx.scale_f);
-  const int64_t hd_vec = head_dim & ~15;
-  for (int64_t r = 0; r < n_rep; ++r) {
-    const int64_t qh = kv_h * n_rep + r;
-    for (int64_t qi = 0; qi < tile_q; ++qi) {
-      const at::BFloat16* src =
-          ctx.q_ptr + (q_base_offset + qi) * ctx.token_stride + qh * head_dim;
-      at::BFloat16* dst = c.q_tile_buf[r] + qi * head_dim;
-      int64_t d = 0;
-      for (; d < hd_vec; d += 16) {
-        __m256i raw =
-            _mm256_loadu_si256(reinterpret_cast<const __m256i*>(src + d));
-        __m512 fp32 = _mm512_cvtpbh_ps(reinterpret_cast<__m256bh>(raw));
-        fp32 = _mm512_mul_ps(fp32, vscale);
-        _mm256_storeu_si256(
-            reinterpret_cast<__m256i*>(dst + d),
-            reinterpret_cast<__m256i>(_mm512_cvtneps_pbh(fp32)));
-      }
-      for (; d < head_dim; ++d)
-        dst[d] = at::BFloat16(static_cast<float>(src[d]) * ctx.scale_f);
-    }
-    if (tile_q < padded_tile_q)
-      std::memset(
-          c.q_tile_buf[r] + tile_q * head_dim,
-          0,
-          (padded_tile_q - tile_q) * head_dim * sizeof(at::BFloat16));
-  }
+  measure_stage<Profile>(
+      profile,
+      &PrefillStageProfile::q_prepare_ns,
+      &PrefillStageProfile::q_prepare_pairs,
+      [&]() {
+        // Initialize accumulators and copy scaled Q rows for all GQA reps.
+        for (int64_t r = 0; r < n_rep; ++r) {
+          std::fill(
+              c.out_fp32[r],
+              c.out_fp32[r] + padded_tile_q * c.hd_padded,
+              0.0f);
+          const int64_t qh = kv_h * n_rep + r;
+          const float sink_bias = ctx.has_sinks ? ctx.sinks_ptr[qh] : 0.0f;
+          if (sink_bias != 0.0f) {
+            std::fill(c.rmax_arr[r], c.rmax_arr[r] + padded_tile_q, sink_bias);
+            std::fill(c.rsum_arr[r], c.rsum_arr[r] + padded_tile_q, 1.0f);
+          } else {
+            std::fill(
+                c.rmax_arr[r],
+                c.rmax_arr[r] + padded_tile_q,
+                -std::numeric_limits<float>::infinity());
+            std::fill(c.rsum_arr[r], c.rsum_arr[r] + padded_tile_q, 0.0f);
+          }
+        }
+
+        const __m512 vscale = _mm512_set1_ps(ctx.scale_f);
+        const int64_t hd_vec = head_dim & ~15;
+        for (int64_t r = 0; r < n_rep; ++r) {
+          const int64_t qh = kv_h * n_rep + r;
+          for (int64_t qi = 0; qi < tile_q; ++qi) {
+            const at::BFloat16* src = ctx.q_ptr +
+                (q_base_offset + qi) * ctx.token_stride + qh * head_dim;
+            at::BFloat16* dst = c.q_tile_buf[r] + qi * head_dim;
+            int64_t d = 0;
+            for (; d < hd_vec; d += 16) {
+              __m256i raw = _mm256_loadu_si256(
+                  reinterpret_cast<const __m256i*>(src + d));
+              __m512 fp32 = _mm512_cvtpbh_ps(reinterpret_cast<__m256bh>(raw));
+              fp32 = _mm512_mul_ps(fp32, vscale);
+              _mm256_storeu_si256(
+                  reinterpret_cast<__m256i*>(dst + d),
+                  reinterpret_cast<__m256i>(_mm512_cvtneps_pbh(fp32)));
+            }
+            for (; d < head_dim; ++d)
+              dst[d] = at::BFloat16(static_cast<float>(src[d]) * ctx.scale_f);
+          }
+          if (tile_q < padded_tile_q)
+            std::memset(
+                c.q_tile_buf[r] + tile_q * head_dim,
+                0,
+                (padded_tile_q - tile_q) * head_dim * sizeof(at::BFloat16));
+        }
+      });
 
   // Sliding window: compute the first block that could be visible to any Q row.
   const int64_t min_q_pos = qs + (kv_len - aq);
@@ -275,198 +316,321 @@ void prefill_tile(
 
     if (kv_start > max_q_pos)
       break;
+    if constexpr (Profile)
+      ++profile->kv_blocks;
     const bool fully_unmasked =
         (kv_start + tokens - 1 <= min_q_pos) && (tokens == blk_size);
 
     const at::BFloat16* k_blk =
         ctx.pool_ptr + kv_h * ctx.ph + pool_blk * ctx.pb;
     const at::BFloat16* k_src = k_blk;
-    if (tokens < blk_size) {
-      std::memcpy(c.k_padded, k_blk, tokens * head_dim * sizeof(at::BFloat16));
-      std::memset(
-          c.k_padded + tokens * head_dim,
-          0,
-          (blk_size - tokens) * head_dim * sizeof(at::BFloat16));
-      k_src = c.k_padded;
-    }
-
     const int64_t k_sub_sz = head_dim * c.sub_n * sizeof(at::BFloat16);
-    for (int64_t s = 0; s < c.n_sub; ++s)
-      c.pack_k.execute(
-          k_src + s * c.sub_n * head_dim, c.k_packed.data() + s * k_sub_sz);
+    measure_stage<Profile>(
+        profile,
+        &PrefillStageProfile::k_pack_ns,
+        &PrefillStageProfile::k_pack_pairs,
+        [&]() {
+          if (tokens < blk_size) {
+            std::memcpy(
+                c.k_padded, k_blk, tokens * head_dim * sizeof(at::BFloat16));
+            std::memset(
+                c.k_padded + tokens * head_dim,
+                0,
+                (blk_size - tokens) * head_dim * sizeof(at::BFloat16));
+            k_src = c.k_padded;
+          }
+          for (int64_t s = 0; s < c.n_sub; ++s)
+            c.pack_k.execute(
+                k_src + s * c.sub_n * head_dim,
+                c.k_packed.data() + s * k_sub_sz);
+        });
 
     // For each rep: QK^T (all subs) + mask + online softmax
     for (int64_t r = 0; r < n_rep; ++r) {
       float* scores = c.scores_fp32;
       at::BFloat16* wbf16 = c.weights_bf16[r];
 
-      for (int64_t s = 0; s < c.n_sub; ++s)
-        c.brg_qkt.execute(
-            c.q_tile_buf[r],
-            c.k_packed.data() + s * k_sub_sz,
-            c.unit_offset,
-            scores + s * c.sub_n,
-            c.scratchpad.data());
+      measure_stage<Profile>(
+          profile,
+          &PrefillStageProfile::qk_ns,
+          &PrefillStageProfile::qk_pairs,
+          [&]() {
+            for (int64_t s = 0; s < c.n_sub; ++s)
+              c.brg_qkt.execute(
+                  c.q_tile_buf[r],
+                  c.k_packed.data() + s * k_sub_sz,
+                  c.unit_offset,
+                  scores + s * c.sub_n,
+                  c.scratchpad.data());
+          });
 
-      // Apply causal mask + optional sliding window mask
-      {
-        const float neginf = -std::numeric_limits<float>::infinity();
-        if (!fully_unmasked || ctx.sliding_window > 0) {
-          for (int64_t qi = 0; qi < tile_q; ++qi) {
-            const int64_t q_pos = (qs + qi) + (kv_len - aq);
-            float* srow = scores + qi * blk_size;
-            for (int64_t t = 0; t < blk_size; ++t) {
-              const int64_t kv_pos = kv_start + t;
-              const bool causal_ok = kv_pos <= q_pos && t < tokens;
-              const bool window_ok = (ctx.sliding_window <= 0) ||
-                  (q_pos - kv_pos < ctx.sliding_window);
-              if (!(causal_ok && window_ok))
-                srow[t] = neginf;
+      measure_stage<Profile>(
+          profile,
+          &PrefillStageProfile::softmax_ns,
+          &PrefillStageProfile::softmax_pairs,
+          [&]() {
+            // Apply causal mask + optional sliding window mask.
+            {
+              const float neginf = -std::numeric_limits<float>::infinity();
+              if (!fully_unmasked || ctx.sliding_window > 0) {
+                for (int64_t qi = 0; qi < tile_q; ++qi) {
+                  const int64_t q_pos = (qs + qi) + (kv_len - aq);
+                  float* srow = scores + qi * blk_size;
+                  for (int64_t t = 0; t < blk_size; ++t) {
+                    const int64_t kv_pos = kv_start + t;
+                    const bool causal_ok = kv_pos <= q_pos && t < tokens;
+                    const bool window_ok = (ctx.sliding_window <= 0) ||
+                        (q_pos - kv_pos < ctx.sliding_window);
+                    if (!(causal_ok && window_ok))
+                      srow[t] = neginf;
+                  }
+                }
+              }
             }
-          }
-        }
-      }
 
-      // Online softmax per Q row: find block max, rescale running state,
-      // compute exp weights as BF16 for the SV BRGeMM.
-      for (int64_t qi = 0; qi < tile_q; ++qi) {
-        const float* srow = scores + qi * blk_size;
+            // Online softmax per Q row: find block max, rescale running state,
+            // compute exp weights as BF16 for the SV BRGeMM.
+            for (int64_t qi = 0; qi < tile_q; ++qi) {
+              const float* srow = scores + qi * blk_size;
 
-        // Vectorized block-max over valid tokens
-        __m512 vbmax = _mm512_set1_ps(-std::numeric_limits<float>::infinity());
-        int64_t mt = 0;
-        for (; mt + 16 <= tokens; mt += 16)
-          vbmax = _mm512_max_ps(vbmax, _mm512_loadu_ps(srow + mt));
-        float bmax = _mm512_reduce_max_ps(vbmax);
-        for (; mt < tokens; ++mt)
-          bmax = std::max(bmax, srow[mt]);
+              // Vectorized block-max over valid tokens.
+              __m512 vbmax =
+                  _mm512_set1_ps(-std::numeric_limits<float>::infinity());
+              int64_t mt = 0;
+              for (; mt + 16 <= tokens; mt += 16)
+                vbmax = _mm512_max_ps(vbmax, _mm512_loadu_ps(srow + mt));
+              float bmax = _mm512_reduce_max_ps(vbmax);
+              for (; mt < tokens; ++mt)
+                bmax = std::max(bmax, srow[mt]);
 
-        // All scores masked — skip this Q row for this block
-        if (bmax == -std::numeric_limits<float>::infinity()) {
-          std::memset(
-              wbf16 + qi * blk_size, 0, blk_size * sizeof(at::BFloat16));
-          continue;
-        }
+              // All scores masked: skip this Q row for this block.
+              if (bmax == -std::numeric_limits<float>::infinity()) {
+                std::memset(
+                    wbf16 + qi * blk_size,
+                    0,
+                    blk_size * sizeof(at::BFloat16));
+                continue;
+              }
 
-        // Rescale accumulated output if block max exceeds running max
-        float nmax = std::max(c.rmax_arr[r][qi], bmax);
-        if (nmax > c.rmax_arr[r][qi]) {
-          float corr;
-          EXP_APPROX_SCALAR(c.rmax_arr[r][qi] - nmax, corr);
-          c.rsum_arr[r][qi] *= corr;
-          float* orow = c.out_fp32[r] + qi * c.hd_padded;
-          const __m512 vcorr = _mm512_set1_ps(corr);
-          int64_t cd = 0;
-          for (; cd + 16 <= head_dim; cd += 16)
-            _mm512_storeu_ps(
-                orow + cd, _mm512_mul_ps(_mm512_loadu_ps(orow + cd), vcorr));
-          for (; cd < head_dim; ++cd)
-            orow[cd] *= corr;
-        }
+              // Rescale accumulated output if block max exceeds running max.
+              float nmax = std::max(c.rmax_arr[r][qi], bmax);
+              if (nmax > c.rmax_arr[r][qi]) {
+                float corr;
+                EXP_APPROX_SCALAR(c.rmax_arr[r][qi] - nmax, corr);
+                c.rsum_arr[r][qi] *= corr;
+                float* orow = c.out_fp32[r] + qi * c.hd_padded;
+                const __m512 vcorr = _mm512_set1_ps(corr);
+                int64_t cd = 0;
+                for (; cd + 16 <= head_dim; cd += 16)
+                  _mm512_storeu_ps(
+                      orow + cd,
+                      _mm512_mul_ps(_mm512_loadu_ps(orow + cd), vcorr));
+                for (; cd < head_dim; ++cd)
+                  orow[cd] *= corr;
+              }
 
-        // Exp weights: vertical accumulate for sum, convert to BF16 for SV
-        const __m512 vnmax = _mm512_set1_ps(-nmax);
-        __m512 vsum = _mm512_setzero_ps();
-        int64_t t = 0;
-        {
-          EXP_APPROX_AVX512_CONSTANTS();
-          for (; t + 16 <= tokens; t += 16) {
-            __m512 s16 = _mm512_loadu_ps(srow + t);
-            __m512 e16;
-            EXP_APPROX_AVX512(_mm512_add_ps(s16, vnmax), e16);
-            vsum = _mm512_add_ps(vsum, e16);
-            _mm256_storeu_si256(
-                reinterpret_cast<__m256i*>(wbf16 + qi * blk_size + t),
-                reinterpret_cast<__m256i>(_mm512_cvtneps_pbh(e16)));
-          }
-        }
-        float rsum_local = _mm512_reduce_add_ps(vsum);
-        for (; t < tokens; ++t) {
-          float w;
-          EXP_APPROX_SCALAR(srow[t] - nmax, w);
-          rsum_local += w;
-          wbf16[qi * blk_size + t] = at::BFloat16(w);
-        }
-        c.rsum_arr[r][qi] += rsum_local;
-        // Zero padding weights so BRGeMM SV reads zeros for unused positions
-        if (tokens < blk_size)
-          std::memset(
-              wbf16 + qi * blk_size + tokens,
-              0,
-              (blk_size - tokens) * sizeof(at::BFloat16));
-        c.rmax_arr[r][qi] = nmax;
-      }
+              // Convert exp weights to BF16 for the SV BRGeMM.
+              const __m512 vnmax = _mm512_set1_ps(-nmax);
+              __m512 vsum = _mm512_setzero_ps();
+              int64_t t = 0;
+              {
+                EXP_APPROX_AVX512_CONSTANTS();
+                for (; t + 16 <= tokens; t += 16) {
+                  __m512 s16 = _mm512_loadu_ps(srow + t);
+                  __m512 e16;
+                  EXP_APPROX_AVX512(_mm512_add_ps(s16, vnmax), e16);
+                  vsum = _mm512_add_ps(vsum, e16);
+                  _mm256_storeu_si256(
+                      reinterpret_cast<__m256i*>(wbf16 + qi * blk_size + t),
+                      reinterpret_cast<__m256i>(_mm512_cvtneps_pbh(e16)));
+                }
+              }
+              float rsum_local = _mm512_reduce_add_ps(vsum);
+              for (; t < tokens; ++t) {
+                float w;
+                EXP_APPROX_SCALAR(srow[t] - nmax, w);
+                rsum_local += w;
+                wbf16[qi * blk_size + t] = at::BFloat16(w);
+              }
+              c.rsum_arr[r][qi] += rsum_local;
+              // Zero padding weights so BRGeMM reads no unused positions.
+              if (tokens < blk_size)
+                std::memset(
+                    wbf16 + qi * blk_size + tokens,
+                    0,
+                    (blk_size - tokens) * sizeof(at::BFloat16));
+              c.rmax_arr[r][qi] = nmax;
+            }
+          });
     }
 
     // S@V: pack V and accumulate weighted sum via BRGeMM
     const at::BFloat16* v_blk = k_blk + ctx.pvo;
     const at::BFloat16* v_src = v_blk;
-    if (tokens < blk_size) {
-      std::memcpy(c.v_padded, v_blk, tokens * head_dim * sizeof(at::BFloat16));
-      std::memset(
-          c.v_padded + tokens * head_dim,
-          0,
-          (blk_size - tokens) * head_dim * sizeof(at::BFloat16));
-      v_src = c.v_padded;
-    }
-
     const int64_t v_sub_sz = c.sub_n * c.hd_sub * sizeof(at::BFloat16);
     const bool hd_needs_pad = (c.n_hd_sub * c.hd_sub > head_dim);
     for (int64_t hs = 0; hs < c.n_hd_sub; ++hs) {
-      const bool last_hd = hd_needs_pad && (hs == c.n_hd_sub - 1);
-      for (int64_t s = 0; s < c.n_sub; ++s) {
-        const at::BFloat16* vs = v_src + s * c.sub_n * head_dim + hs * c.hd_sub;
-        if (last_hd) {
-          const int64_t valid_hd = head_dim - hs * c.hd_sub;
-          at::BFloat16* vpad = c.v_padded;
-          for (int64_t t = 0; t < c.sub_n; ++t) {
-            std::memcpy(
-                vpad + t * head_dim,
-                vs + t * head_dim,
-                valid_hd * sizeof(at::BFloat16));
-            std::memset(
-                vpad + t * head_dim + valid_hd,
-                0,
-                (c.hd_sub - valid_hd) * sizeof(at::BFloat16));
-          }
-          vs = vpad;
-        }
-        c.pack_v.execute(vs, c.v_packed.data() + s * v_sub_sz);
-      }
-      for (int64_t r = 0; r < n_rep; ++r)
-        c.brg_sv.execute(
-            c.weights_bf16[r],
-            c.v_packed.data(),
-            c.sv_offsets,
-            c.out_fp32[r] + hs * c.hd_sub,
-            c.scratchpad.data());
+      measure_stage<Profile>(
+          profile,
+          &PrefillStageProfile::v_pack_ns,
+          &PrefillStageProfile::v_pack_pairs,
+          [&]() {
+            if (hs == 0 && tokens < blk_size) {
+              std::memcpy(
+                  c.v_padded, v_blk, tokens * head_dim * sizeof(at::BFloat16));
+              std::memset(
+                  c.v_padded + tokens * head_dim,
+                  0,
+                  (blk_size - tokens) * head_dim * sizeof(at::BFloat16));
+              v_src = c.v_padded;
+            }
+            const bool last_hd = hd_needs_pad && (hs == c.n_hd_sub - 1);
+            for (int64_t s = 0; s < c.n_sub; ++s) {
+              const at::BFloat16* vs =
+                  v_src + s * c.sub_n * head_dim + hs * c.hd_sub;
+              if (last_hd) {
+                const int64_t valid_hd = head_dim - hs * c.hd_sub;
+                at::BFloat16* vpad = c.v_padded;
+                for (int64_t t = 0; t < c.sub_n; ++t) {
+                  std::memcpy(
+                      vpad + t * head_dim,
+                      vs + t * head_dim,
+                      valid_hd * sizeof(at::BFloat16));
+                  std::memset(
+                      vpad + t * head_dim + valid_hd,
+                      0,
+                      (c.hd_sub - valid_hd) * sizeof(at::BFloat16));
+                }
+                vs = vpad;
+              }
+              c.pack_v.execute(vs, c.v_packed.data() + s * v_sub_sz);
+            }
+          });
+      measure_stage<Profile>(
+          profile,
+          &PrefillStageProfile::pv_ns,
+          &PrefillStageProfile::pv_pairs,
+          [&]() {
+            for (int64_t r = 0; r < n_rep; ++r)
+              c.brg_sv.execute(
+                  c.weights_bf16[r],
+                  c.v_packed.data(),
+                  c.sv_offsets,
+                  c.out_fp32[r] + hs * c.hd_sub,
+                  c.scratchpad.data());
+          });
     }
   }
 
   brgemm::release_hw_context();
 
-  // Normalize and write output to ragged positions
-  for (int64_t r = 0; r < n_rep; ++r) {
-    const int64_t qh = kv_h * n_rep + r;
-    for (int64_t qi = 0; qi < tile_q; ++qi) {
-      at::BFloat16* out =
-          ctx.o_ptr + (q_base_offset + qi) * ctx.token_stride + qh * head_dim;
-      const float* src = c.out_fp32[r] + qi * c.hd_padded;
-      if (c.rsum_arr[r][qi] > 0.0f) {
-        const __m512 vinv = _mm512_set1_ps(1.0f / c.rsum_arr[r][qi]);
-        int64_t d = 0;
-        for (; d + 16 <= head_dim; d += 16) {
-          __m512 v = _mm512_mul_ps(_mm512_loadu_ps(src + d), vinv);
-          _mm256_storeu_si256(
-              reinterpret_cast<__m256i*>(out + d),
-              reinterpret_cast<__m256i>(_mm512_cvtneps_pbh(v)));
+  measure_stage<Profile>(
+      profile,
+      &PrefillStageProfile::normalize_ns,
+      &PrefillStageProfile::normalize_pairs,
+      [&]() {
+        // Normalize and write output to ragged positions.
+        for (int64_t r = 0; r < n_rep; ++r) {
+          const int64_t qh = kv_h * n_rep + r;
+          for (int64_t qi = 0; qi < tile_q; ++qi) {
+            at::BFloat16* out = ctx.o_ptr +
+                (q_base_offset + qi) * ctx.token_stride + qh * head_dim;
+            const float* src = c.out_fp32[r] + qi * c.hd_padded;
+            if (c.rsum_arr[r][qi] > 0.0f) {
+              const __m512 vinv =
+                  _mm512_set1_ps(1.0f / c.rsum_arr[r][qi]);
+              int64_t d = 0;
+              for (; d + 16 <= head_dim; d += 16) {
+                __m512 v = _mm512_mul_ps(_mm512_loadu_ps(src + d), vinv);
+                _mm256_storeu_si256(
+                    reinterpret_cast<__m256i*>(out + d),
+                    reinterpret_cast<__m256i>(_mm512_cvtneps_pbh(v)));
+              }
+              const float inv = 1.0f / c.rsum_arr[r][qi];
+              for (; d < head_dim; ++d)
+                out[d] = at::BFloat16(src[d] * inv);
+            }
+          }
         }
-        const float inv = 1.0f / c.rsum_arr[r][qi];
-        for (; d < head_dim; ++d)
-          out[d] = at::BFloat16(src[d] * inv);
-      }
-    }
+      });
+}
+
+void prefill_tile(
+    const KernelCtx& ctx,
+    int64_t kv_len,
+    int64_t q_len,
+    int64_t q_offset,
+    const std::vector<int64_t>& block_indices,
+    int64_t kv_h,
+    int64_t qt,
+    int64_t query_tile,
+    PrefillStageProfile* profile) {
+  if (profile) {
+    prefill_tile_impl<true>(
+        ctx,
+        kv_len,
+        q_len,
+        q_offset,
+        block_indices,
+        kv_h,
+        qt,
+        query_tile,
+        profile);
+  } else {
+    prefill_tile_impl<false>(
+        ctx,
+        kv_len,
+        q_len,
+        q_offset,
+        block_indices,
+        kv_h,
+        qt,
+        query_tile,
+        nullptr);
   }
+}
+
+namespace {
+
+struct TimerCalibration {
+  double pair_cost_ns;
+  double empty_interval_ns;
+};
+
+const TimerCalibration& timer_calibration() {
+  static const TimerCalibration calibration = []() {
+    constexpr int64_t iterations = 100000;
+    uint64_t empty_interval_sum = 0;
+    const auto outer_start = StageClock::now();
+    for (int64_t i = 0; i < iterations; ++i) {
+      const auto start = StageClock::now();
+      const auto end = StageClock::now();
+      empty_interval_sum += static_cast<uint64_t>(
+          std::chrono::duration_cast<std::chrono::nanoseconds>(end - start)
+              .count());
+    }
+    const auto outer_end = StageClock::now();
+    const double pair_cost = static_cast<double>(
+                                 std::chrono::duration_cast<
+                                     std::chrono::nanoseconds>(
+                                     outer_end - outer_start)
+                                     .count()) /
+        iterations;
+    const double empty_interval =
+        static_cast<double>(empty_interval_sum) / iterations;
+    return TimerCalibration{pair_cost, empty_interval};
+  }();
+  return calibration;
+}
+
+} // anonymous namespace
+
+double prefill_timer_pair_cost_ns() {
+  return timer_calibration().pair_cost_ns;
+}
+
+double prefill_timer_empty_interval_ns() {
+  return timer_calibration().empty_interval_ns;
 }
 
 } // namespace kernels

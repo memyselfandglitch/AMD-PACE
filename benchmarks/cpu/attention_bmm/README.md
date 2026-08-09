@@ -190,3 +190,65 @@ This job rebuilds the native PACE library because the selectable tile is C++
 code. Results are written to `benchmark_results/pace-prefill-tile/<job_id>/`,
 including raw trials, per-tile summaries, workload decisions, environment
 metadata, and a ready-to-read Markdown report.
+
+## Real Prefill Stage Profile And Packing-Reuse Gate
+
+The stage profiler measures where time is spent inside the production BF16
+SlabPool prefill kernel before attempting a K/V-reuse rewrite. It records:
+
+```text
+BRGeMM cache/context setup, Q preparation, K packing, QK^T,
+mask/online softmax, V packing, P*V, and output normalization
+```
+
+Profiling is disabled by default. When enabled through the diagnostic SlabPool
+API, timing accumulates in thread-local structs and is reduced after the OpenMP
+region; the timed kernel contains no file I/O, mutex, or shared atomic update.
+The benchmark randomizes one profiled and one unprofiled call in every paired
+round. It separately reports:
+
+- the runtime cost of each timer pair;
+- the empty interval observed between two adjacent timer reads;
+- measured profiled/unprofiled wall-latency overhead;
+- bias-corrected K+V packing fraction with a bootstrap 95% interval;
+- the ideal Amdahl speedup ceiling if packing were reused across query tiles.
+
+Packing reuse is grouped by query-tile count (`query_len / 64`), because that
+is the number of times the current query-tile-outer kernel revisits each KV
+block. The report recommends a synthetic reuse prototype only when profiler
+overhead's upper 95% bound is at most 2%, estimated timer bias's upper 95%
+bound is at most 1%, and the lower 95% bound of the ideal reuse ceiling is at
+least `1.05x`. This is a go/no-go gate, not a claim that the ideal speedup is
+achievable.
+
+Run the complete first-stage experiment from the repository root:
+
+```bash
+sbatch benchmarks/cpu/attention_bmm/slurm_pace_prefill_stage_profile.sbatch
+```
+
+Run a small build and schema smoke test first:
+
+```bash
+PACE_STAGE_SHAPES=slm \
+PACE_STAGE_QUERY_LENS=128 \
+PACE_STAGE_KV_LENS=2048 \
+PACE_STAGE_BATCH_SIZES=1 \
+PACE_STAGE_DATA_SEEDS=11 \
+PACE_STAGE_REPEATS=3 \
+  sbatch --export=ALL \
+  benchmarks/cpu/attention_bmm/slurm_pace_prefill_stage_profile.sbatch
+```
+
+Results are written to `benchmark_results/pace-prefill-stage/<job_id>/`:
+
+- `pace_prefill_stage_latency_trials.csv`: randomized paired wall times;
+- `pace_prefill_stage_profiles.csv`: raw and corrected stage counters;
+- `pace_prefill_stage_summary.csv`: per-workload confidence intervals and gate;
+- `pace_prefill_stage_report.md`: ready-to-read decision table;
+- `environment.txt`: exact hardware, binding, software, and sweep settings.
+
+This first gate intentionally profiles the attention call only. Slab allocation
+and `cache_update` happen once during workload setup and remain outside the
+paired timing region. Allocation/copy timing is a separate follow-up because it
+answers a different question from repeated K/V packing inside prefill.

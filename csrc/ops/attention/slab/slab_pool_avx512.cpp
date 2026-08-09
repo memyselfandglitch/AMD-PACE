@@ -201,6 +201,15 @@ int64_t SlabPool::get_free_block_count() {
   return static_cast<int64_t>(free_list.size());
 }
 
+void SlabPool::set_stage_profile(bool enabled) {
+  stage_profile_enabled.store(enabled, std::memory_order_relaxed);
+}
+
+std::vector<double> SlabPool::get_stage_profile() {
+  std::lock_guard<std::mutex> lock(stage_profile_mutex);
+  return last_stage_profile;
+}
+
 // Sequence Management
 void SlabPool::create_sequence(int64_t seq_id, int64_t max_seq_len) {
   PROFILE_PACE_FUNCTION("slab_sequence_create");

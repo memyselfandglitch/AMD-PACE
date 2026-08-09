@@ -27,6 +27,7 @@
 #include <omp.h>
 #include <chrono>
 #include <cstdlib>
+#include <utility>
 
 namespace pace {
 namespace kernels {
@@ -365,6 +366,11 @@ at::Tensor SlabPool::attention(
       ",selected_schedule=",
       use_static ? "static" : "dynamic");
 
+  const bool collect_stage_profile =
+      stage_profile_enabled.load(std::memory_order_relaxed);
+  std::vector<PrefillStageProfile> thread_profiles(
+      collect_stage_profile ? static_cast<size_t>(num_threads) : 0);
+
   auto dispatch_one = [&](int64_t wi) {
     const auto& item = work_items[wi];
     const auto& si = seq_infos[item.seq_idx];
@@ -471,7 +477,10 @@ at::Tensor SlabPool::attention(
           si.blocks,
           item.arg0,
           item.arg1,
-          query_tile);
+          query_tile,
+          collect_stage_profile
+              ? &thread_profiles[static_cast<size_t>(omp_get_thread_num())]
+              : nullptr);
     }
   };
 
@@ -515,6 +524,74 @@ at::Tensor SlabPool::attention(
     }
   }
   const auto reduction_end = std::chrono::high_resolution_clock::now();
+
+  if (collect_stage_profile) {
+    PrefillStageProfile aggregate;
+    int64_t active_threads = 0;
+    for (const auto& profile : thread_profiles) {
+      aggregate.cache_init_ns += profile.cache_init_ns;
+      aggregate.q_prepare_ns += profile.q_prepare_ns;
+      aggregate.k_pack_ns += profile.k_pack_ns;
+      aggregate.qk_ns += profile.qk_ns;
+      aggregate.softmax_ns += profile.softmax_ns;
+      aggregate.v_pack_ns += profile.v_pack_ns;
+      aggregate.pv_ns += profile.pv_ns;
+      aggregate.normalize_ns += profile.normalize_ns;
+      aggregate.cache_init_pairs += profile.cache_init_pairs;
+      aggregate.q_prepare_pairs += profile.q_prepare_pairs;
+      aggregate.k_pack_pairs += profile.k_pack_pairs;
+      aggregate.qk_pairs += profile.qk_pairs;
+      aggregate.softmax_pairs += profile.softmax_pairs;
+      aggregate.v_pack_pairs += profile.v_pack_pairs;
+      aggregate.pv_pairs += profile.pv_pairs;
+      aggregate.normalize_pairs += profile.normalize_pairs;
+      aggregate.work_items += profile.work_items;
+      aggregate.kv_blocks += profile.kv_blocks;
+      active_threads += profile.work_items > 0;
+    }
+    const uint64_t stage_sum_ns = aggregate.cache_init_ns +
+        aggregate.q_prepare_ns + aggregate.k_pack_ns + aggregate.qk_ns +
+        aggregate.softmax_ns + aggregate.v_pack_ns + aggregate.pv_ns +
+        aggregate.normalize_ns;
+    const uint64_t timer_pairs = aggregate.cache_init_pairs +
+        aggregate.q_prepare_pairs + aggregate.k_pack_pairs + aggregate.qk_pairs +
+        aggregate.softmax_pairs + aggregate.v_pack_pairs + aggregate.pv_pairs +
+        aggregate.normalize_pairs;
+    const double dispatch_wall_ns = static_cast<double>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            dispatch_end - dispatch_start)
+            .count());
+    std::vector<double> result = {
+        prefill_timer_pair_cost_ns(),
+        prefill_timer_empty_interval_ns(),
+        dispatch_wall_ns,
+        static_cast<double>(stage_sum_ns),
+        static_cast<double>(aggregate.cache_init_ns),
+        static_cast<double>(aggregate.q_prepare_ns),
+        static_cast<double>(aggregate.k_pack_ns),
+        static_cast<double>(aggregate.qk_ns),
+        static_cast<double>(aggregate.softmax_ns),
+        static_cast<double>(aggregate.v_pack_ns),
+        static_cast<double>(aggregate.pv_ns),
+        static_cast<double>(aggregate.normalize_ns),
+        static_cast<double>(aggregate.cache_init_pairs),
+        static_cast<double>(aggregate.q_prepare_pairs),
+        static_cast<double>(aggregate.k_pack_pairs),
+        static_cast<double>(aggregate.qk_pairs),
+        static_cast<double>(aggregate.softmax_pairs),
+        static_cast<double>(aggregate.v_pack_pairs),
+        static_cast<double>(aggregate.pv_pairs),
+        static_cast<double>(aggregate.normalize_pairs),
+        static_cast<double>(timer_pairs),
+        static_cast<double>(aggregate.work_items),
+        static_cast<double>(aggregate.kv_blocks),
+        static_cast<double>(active_threads),
+        static_cast<double>(total_work),
+        static_cast<double>(num_threads),
+    };
+    std::lock_guard<std::mutex> lock(stage_profile_mutex);
+    last_stage_profile = std::move(result);
+  }
 
   PROFILE_ADD_INFO(
       ",dispatch_ms=",

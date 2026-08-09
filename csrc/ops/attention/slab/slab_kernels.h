@@ -51,6 +51,16 @@ struct KernelCtx {
   const float* sinks_ptr;
 };
 
+// Thread-local diagnostic counters for one prefill attention call. Timings are
+// CPU nanoseconds summed across work items, not wall-clock durations.
+struct alignas(64) PrefillStageProfile {
+  uint64_t cache_init_ns = 0, q_prepare_ns = 0, k_pack_ns = 0, qk_ns = 0;
+  uint64_t softmax_ns = 0, v_pack_ns = 0, pv_ns = 0, normalize_ns = 0;
+  uint64_t cache_init_pairs = 0, q_prepare_pairs = 0, k_pack_pairs = 0;
+  uint64_t qk_pairs = 0, softmax_pairs = 0, v_pack_pairs = 0, pv_pairs = 0;
+  uint64_t normalize_pairs = 0, work_items = 0, kv_blocks = 0;
+};
+
 // Function declarations
 // BRGeMM tiled prefill for one (kv_head, q_tile) work item.
 // Manages its own thread-local BrgemmCache internally.
@@ -62,7 +72,11 @@ void prefill_tile(
     const std::vector<int64_t>& block_indices,
     int64_t kv_h,
     int64_t qt,
-    int64_t query_tile);
+    int64_t query_tile,
+    PrefillStageProfile* profile = nullptr);
+
+double prefill_timer_pair_cost_ns();
+double prefill_timer_empty_interval_ns();
 
 namespace impl {
 

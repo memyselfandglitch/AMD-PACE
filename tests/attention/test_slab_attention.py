@@ -71,6 +71,32 @@ def _setup_pool_with_kv(bs, seq_len, h_kv, d, blk_size=16, max_seq=None):
 
 
 class TestSlabCausalAttention(TestCase):
+    def test_prefill_stage_profile(self):
+        """Diagnostic profiling returns populated prefill stage counters."""
+        bs, seq_len, h_q, h_kv, head_dim = 1, 128, 8, 4, 64
+        scale = 1.0 / math.sqrt(head_dim)
+        pool, seq_ids, _, _ = _setup_pool_with_kv(
+            bs, seq_len, h_kv, head_dim, blk_size=64
+        )
+        query = torch.randn(bs, seq_len, h_q, head_dim, dtype=torch.bfloat16)
+
+        pool.set_stage_profile(True)
+        output = pool.attention(
+            seq_ids, query, [seq_len], [], scale, 0, torch.tensor([])
+        )
+        profile = pool.get_stage_profile()
+        pool.set_stage_profile(False)
+
+        self.assertEqual(output.shape, query.shape)
+        self.assertEqual(len(profile), 26)
+        self.assertGreater(profile[0], 0)  # timer-pair runtime cost
+        self.assertGreaterEqual(profile[1], 0)  # empty measured interval
+        self.assertGreater(profile[3], 0)  # summed stage nanoseconds
+        self.assertGreater(profile[6], 0)  # K packing nanoseconds
+        self.assertGreater(profile[9], 0)  # V packing nanoseconds
+        self.assertGreater(profile[20], 0)  # timer pairs
+        self.assertGreater(profile[21], 0)  # prefill work items
+
     def test_prefill_query_tile_variants(self):
         """Runtime prefill tiles preserve BF16 attention correctness."""
         bs, seq_len, h_q, h_kv, head_dim = 1, 128, 8, 4, 64

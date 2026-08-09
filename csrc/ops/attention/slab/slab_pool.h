@@ -74,6 +74,9 @@ struct SlabPool : torch::CustomClassHolder {
 
   std::mutex pool_mutex;
   std::mutex sequence_mutex;
+  std::mutex stage_profile_mutex;
+  std::atomic<bool> stage_profile_enabled{false};
+  std::vector<double> last_stage_profile;
 
   // Constructor
   SlabPool(
@@ -88,6 +91,8 @@ struct SlabPool : torch::CustomClassHolder {
   void truncate_sequence(int64_t sequence_id, int64_t remove_len);
   int64_t get_sequence_length(int64_t sequence_id);
   int64_t get_free_block_count();
+  void set_stage_profile(bool enabled);
+  std::vector<double> get_stage_profile();
 
   // Cache update: accepts 3D [total_tokens, KV, D] (ragged) or
   // 4D [B, S, KV, D] (batched). 4D is auto-reshaped to 3D internally.
