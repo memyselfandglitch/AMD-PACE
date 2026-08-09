@@ -1,0 +1,4 @@
+Profiling started.
+order,query_len,kv_len,head_dim,seed,iterations,elapsed_s,gflops,checksum
+kij,1,8192,64,11,117727,5.000021057,24.689037375,-527.225687444
+Generated Cumulative data file path: /data/scratch/deveshisingh/AMD-PACE/benchmark_results/cpu-pv-crossover-uprof/7113/raw/07_decode_control_kij_m1_n8192_d64.uprof.csv
