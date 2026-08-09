@@ -22,9 +22,9 @@ RESULT_DIR="${PACE_RESULT_DIR:-${PACE_REPO}/benchmark_results/cpu-loop-order/${R
 CXX_BIN="${CXX:-g++}"
 CPU_CORE="${PACE_CPU_CORE:-0}"
 NUMA_NODE="${PACE_NUMA_NODE:-0}"
-SIZES="${PACE_GEMM_SIZES:-64,128,256,512}"
-WARMUPS="${PACE_GEMM_WARMUPS:-2}"
-REPEATS="${PACE_GEMM_REPEATS:-20}"
+SIZES="${PACE_GEMM_SIZES:-32,48,64,80,96,112,128,160,192,224,256,320,384,448,512}"
+WARMUPS="${PACE_GEMM_WARMUPS:-5}"
+REPEATS="${PACE_GEMM_REPEATS:-50}"
 SEED="${PACE_GEMM_SEED:-20260809}"
 COMPILE_FLAGS=(-O3 -march=native -std=c++17 -DNDEBUG)
 if "${CXX_BIN}" --version | head -n 1 | grep -qiE 'gcc|g\+\+'; then
@@ -80,5 +80,13 @@ fi
     --raw-csv "${RESULT_DIR}/gemm_loop_order_trials.csv" \
     --summary-csv "${RESULT_DIR}/gemm_loop_order_summary.csv"
 
+python3 "${BENCH_DIR}/analyze_gemm_loop_threshold.py" \
+    --trials "${RESULT_DIR}/gemm_loop_order_trials.csv" \
+    --summary "${RESULT_DIR}/gemm_loop_order_summary.csv" \
+    --out-csv "${RESULT_DIR}/gemm_loop_order_threshold.csv" \
+    --out-md "${RESULT_DIR}/gemm_loop_order_threshold.md" \
+    --seed "${SEED}"
+
 echo "finished=$(date --iso-8601=seconds)"
 echo "Summary: ${RESULT_DIR}/gemm_loop_order_summary.csv"
+echo "Threshold report: ${RESULT_DIR}/gemm_loop_order_threshold.md"

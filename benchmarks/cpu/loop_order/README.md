@@ -23,11 +23,11 @@ Their order is shuffled independently in every warmup and measured round. Input
 matrices are generated once per size from a deterministic seed. Clearing `C` and
 checking correctness are outside the timed region.
 
-Default settings:
+Default threshold-sweep settings:
 
-- Sizes: `64,128,256,512`
-- Warmup rounds: `2`
-- Measured paired rounds: `20`
+- Sizes: `32,48,64,80,96,112,128,160,192,224,256,320,384,448,512`
+- Warmup rounds: `5`
+- Measured paired rounds: `50`
 - Threads: `1`
 - Compiler flags: `-O3 -march=native -std=c++17`; GCC additionally receives
   `-fno-loop-interchange` so it cannot rewrite the source permutation being
@@ -39,6 +39,11 @@ The benchmark writes:
 - `gemm_loop_order_summary.csv`: mean, median, p95, range, GFLOP/s, correctness,
   median rank/best marker, and speedup relative to `ijk` for each matrix size
   and loop order.
+- `gemm_loop_order_threshold.csv`: paired `ikj` versus `kij` statistics and a
+  strict decision at each sampled size, including the combined `A+B+C`
+  working-set size.
+- `gemm_loop_order_threshold.md`: an automatic report that only identifies a
+  crossover when the strict winners form one consistent size transition.
 - `environment.txt`: CPU, compiler, git commit, affinity, governor, and boost
   state for reproducibility.
 
@@ -59,7 +64,7 @@ benchmark_results/cpu-loop-order/<job_id>/
 Optional overrides can be supplied with Slurm's environment export:
 
 ```bash
-PACE_GEMM_SIZES=64,128,256,512 PACE_GEMM_REPEATS=50 PACE_GEMM_SEED=42 \
+PACE_GEMM_SIZES=48,64,80,96,112,128 PACE_GEMM_REPEATS=50 PACE_GEMM_SEED=42 \
   sbatch --export=ALL benchmarks/cpu/loop_order/slurm_gemm_loop_order.sbatch
 ```
 
