@@ -1,0 +1,2 @@
+order,query_len,kv_len,head_dim,seed,iterations,elapsed_s,gflops,checksum
+kij,512,2048,64,11,800,5.004739613,21.4544992753,1643.8115429

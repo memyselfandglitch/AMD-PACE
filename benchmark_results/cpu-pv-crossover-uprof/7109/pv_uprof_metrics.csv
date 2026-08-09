@@ -1,0 +1,401 @@
+case_label,order,query_len,kv_len,head_dim,metric,value,iterations,value_per_iteration
+ikj_after_crossover,kij,512,8192,64,Retired Instructions,25326616254.0,173,146396625.74566475
+ikj_after_crossover,kij,512,8192,64,Retired Macro Ops,27758366700.0,173,
+ikj_after_crossover,kij,512,8192,64,Cycles Not in Halt,15842389314.0,173,91574504.70520231
+ikj_after_crossover,kij,512,8192,64,Utilization (%),0.68,173,
+ikj_after_crossover,kij,512,8192,64,System time (%),20.73,173,
+ikj_after_crossover,kij,512,8192,64,User time (%),79.42,173,
+ikj_after_crossover,kij,512,8192,64,System instructions (%),7.82,173,
+ikj_after_crossover,kij,512,8192,64,User instructions (%),92.18,173,
+ikj_after_crossover,kij,512,8192,64,Eff Freq (MHz),2837.74,173,
+ikj_after_crossover,kij,512,8192,64,IPC (Sys + User),1.62,173,
+ikj_after_crossover,kij,512,8192,64,IPC (Sys),0.61,173,
+ikj_after_crossover,kij,512,8192,64,IPC (User),1.88,173,
+ikj_after_crossover,kij,512,8192,64,CPI (Sys + User),0.62,173,
+ikj_after_crossover,kij,512,8192,64,CPI (Sys),1.63,173,
+ikj_after_crossover,kij,512,8192,64,CPI (User),0.53,173,
+ikj_after_crossover,kij,512,8192,64,Giga Instructions Per Sec,6.04,173,0.034913294797687865
+ikj_after_crossover,kij,512,8192,64,Locked Instructions (pti),0.0,173,0.0
+ikj_after_crossover,kij,512,8192,64,Retired Branches (pti),189.66,173,
+ikj_after_crossover,kij,512,8192,64,Retired Branches Mispredicted (pti),1.8,173,
+ikj_after_crossover,kij,512,8192,64,L2 Access (pti),208.79,173,1.206878612716763
+ikj_after_crossover,kij,512,8192,64,L2 Access from IC Miss (pti),2.37,173,0.01369942196531792
+ikj_after_crossover,kij,512,8192,64,L2 Access from DC Miss (pti),117.79,173,0.6808670520231215
+ikj_after_crossover,kij,512,8192,64,L2 Access from L2 HWPF (pti),88.26,173,0.5101734104046243
+ikj_after_crossover,kij,512,8192,64,L2 Miss (pti),2.73,173,0.015780346820809248
+ikj_after_crossover,kij,512,8192,64,L2 Miss from IC Miss (pti),0.76,173,0.004393063583815029
+ikj_after_crossover,kij,512,8192,64,L2 Miss from DC Miss (pti),0.44,173,0.0025433526011560694
+ikj_after_crossover,kij,512,8192,64,L2 Miss from L2 HWPF (pti),1.53,173,0.008843930635838151
+ikj_after_crossover,kij,512,8192,64,L2 Hit (pti),206.28,173,
+ikj_after_crossover,kij,512,8192,64,L2 Hit from IC Miss (pti),2.1,173,0.012138728323699423
+ikj_after_crossover,kij,512,8192,64,L2 Hit from DC Miss (pti),117.45,173,0.6789017341040463
+ikj_after_crossover,kij,512,8192,64,L2 Hit from L2 HWPF (pti),86.73,173,
+ikj_after_crossover,kij,512,8192,64,L3 Access,83941302.0,173,485209.838150289
+ikj_after_crossover,kij,512,8192,64,L3 Miss,32420469.0,173,187401.5549132948
+ikj_after_crossover,kij,512,8192,64,L3 Access (pti),1.47,173,0.008497109826589595
+ikj_after_crossover,kij,512,8192,64,L3 Miss (pti),0.57,173,0.0032947976878612713
+ikj_after_crossover,kij,512,8192,64,L3 Miss %,38.62,173,
+ikj_after_crossover,kij,512,8192,64,L3 Hit %,61.38,173,
+ikj_after_crossover,kij,512,8192,64,Ave L3 Miss Latency (ns),123.67,173,
+ikj_after_crossover,kij,512,8192,64,L3 Miss Latency From Local Memory or I/O (%),58.8,173,
+ikj_after_crossover,kij,512,8192,64,L3 Miss Latency From Remote Memory or I/O (%),19.28,173,
+ikj_after_crossover,kij,512,8192,64,L3 Miss Latency From another CCX in same node (%),14.7,173,
+ikj_after_crossover,kij,512,8192,64,L3 Miss Latency From another CCX in remote node (%),6.73,173,
+ikj_after_crossover,kij,512,8192,64,L3 Miss Latency From Extension Memory (CXL) (%),0.0,173,
+ikj_after_crossover,kij,512,8192,64,Total Mem Bw (GB/s),0.43,173,
+ikj_after_crossover,kij,512,8192,64,Local DRAM Read Data Bytes(GB/s),0.36,173,
+ikj_after_crossover,kij,512,8192,64,Local DRAM Write Data Bytes(GB/s),0.01,173,
+ikj_after_crossover,kij,512,8192,64,Remote DRAM Read Data Bytes (GB/s),0.06,173,
+ikj_after_crossover,kij,512,8192,64,Remote DRAM Write Data Bytes (GB/s),0.0,173,
+ikj_after_crossover,kij,512,8192,64,Total Mem RdBw (GB/s),0.41,173,
+ikj_after_crossover,kij,512,8192,64,Total Mem WrBw (GB/s),0.01,173,
+kij_before_crossover,ikj,512,2048,64,Retired Instructions,18445474638.0,510,36167597.32941177
+kij_before_crossover,ikj,512,2048,64,Retired Macro Ops,20303836746.0,510,
+kij_before_crossover,ikj,512,2048,64,Cycles Not in Halt,15642755706.0,510,30672070.011764705
+kij_before_crossover,ikj,512,2048,64,Utilization (%),0.65,510,
+kij_before_crossover,ikj,512,2048,64,System time (%),18.57,510,
+kij_before_crossover,ikj,512,2048,64,User time (%),81.57,510,
+kij_before_crossover,ikj,512,2048,64,System instructions (%),8.93,510,
+kij_before_crossover,ikj,512,2048,64,User instructions (%),91.07,510,
+kij_before_crossover,ikj,512,2048,64,Eff Freq (MHz),2909.17,510,
+kij_before_crossover,ikj,512,2048,64,IPC (Sys + User),1.22,510,
+kij_before_crossover,ikj,512,2048,64,IPC (Sys),0.59,510,
+kij_before_crossover,ikj,512,2048,64,IPC (User),1.37,510,
+kij_before_crossover,ikj,512,2048,64,CPI (Sys + User),0.82,510,
+kij_before_crossover,ikj,512,2048,64,CPI (Sys),1.7,510,
+kij_before_crossover,ikj,512,2048,64,CPI (User),0.73,510,
+kij_before_crossover,ikj,512,2048,64,Giga Instructions Per Sec,4.43,510,0.00868627450980392
+kij_before_crossover,ikj,512,2048,64,Locked Instructions (pti),0.0,510,0.0
+kij_before_crossover,ikj,512,2048,64,Retired Branches (pti),193.8,510,
+kij_before_crossover,ikj,512,2048,64,Retired Branches Mispredicted (pti),2.14,510,
+kij_before_crossover,ikj,512,2048,64,L2 Access (pti),101.82,510,0.1996470588235294
+kij_before_crossover,ikj,512,2048,64,L2 Access from IC Miss (pti),3.2,510,0.006274509803921569
+kij_before_crossover,ikj,512,2048,64,L2 Access from DC Miss (pti),93.03,510,0.18241176470588236
+kij_before_crossover,ikj,512,2048,64,L2 Access from L2 HWPF (pti),5.91,510,0.011588235294117647
+kij_before_crossover,ikj,512,2048,64,L2 Miss (pti),3.44,510,0.006745098039215686
+kij_before_crossover,ikj,512,2048,64,L2 Miss from IC Miss (pti),1.1,510,0.0021568627450980395
+kij_before_crossover,ikj,512,2048,64,L2 Miss from DC Miss (pti),0.66,510,0.0012941176470588236
+kij_before_crossover,ikj,512,2048,64,L2 Miss from L2 HWPF (pti),1.68,510,0.0032941176470588232
+kij_before_crossover,ikj,512,2048,64,L2 Hit (pti),99.19,510,
+kij_before_crossover,ikj,512,2048,64,L2 Hit from IC Miss (pti),1.92,510,0.003764705882352941
+kij_before_crossover,ikj,512,2048,64,L2 Hit from DC Miss (pti),93.03,510,0.18241176470588236
+kij_before_crossover,ikj,512,2048,64,L2 Hit from L2 HWPF (pti),4.23,510,
+kij_before_crossover,ikj,512,2048,64,L3 Access,76827807.0,510,150642.7588235294
+kij_before_crossover,ikj,512,2048,64,L3 Miss,23135076.0,510,45362.89411764706
+kij_before_crossover,ikj,512,2048,64,L3 Access (pti),1.82,510,0.0035686274509803924
+kij_before_crossover,ikj,512,2048,64,L3 Miss (pti),0.55,510,0.0010784313725490198
+kij_before_crossover,ikj,512,2048,64,L3 Miss %,30.11,510,
+kij_before_crossover,ikj,512,2048,64,L3 Hit %,69.89,510,
+kij_before_crossover,ikj,512,2048,64,Ave L3 Miss Latency (ns),137.89,510,
+kij_before_crossover,ikj,512,2048,64,L3 Miss Latency From Local Memory or I/O (%),38.96,510,
+kij_before_crossover,ikj,512,2048,64,L3 Miss Latency From Remote Memory or I/O (%),26.91,510,
+kij_before_crossover,ikj,512,2048,64,L3 Miss Latency From another CCX in same node (%),20.18,510,
+kij_before_crossover,ikj,512,2048,64,L3 Miss Latency From another CCX in remote node (%),13.5,510,
+kij_before_crossover,ikj,512,2048,64,L3 Miss Latency From Extension Memory (CXL) (%),0.0,510,
+kij_before_crossover,ikj,512,2048,64,Total Mem Bw (GB/s),0.3,510,
+kij_before_crossover,ikj,512,2048,64,Local DRAM Read Data Bytes(GB/s),0.22,510,
+kij_before_crossover,ikj,512,2048,64,Local DRAM Write Data Bytes(GB/s),0.01,510,
+kij_before_crossover,ikj,512,2048,64,Remote DRAM Read Data Bytes (GB/s),0.06,510,
+kij_before_crossover,ikj,512,2048,64,Remote DRAM Write Data Bytes (GB/s),0.0,510,
+kij_before_crossover,ikj,512,2048,64,Total Mem RdBw (GB/s),0.28,510,
+kij_before_crossover,ikj,512,2048,64,Total Mem WrBw (GB/s),0.01,510,
+ikj_long_context,kij,512,16384,64,Retired Instructions,24663271866.0,80,308290898.325
+ikj_long_context,kij,512,16384,64,Retired Macro Ops,27037398990.0,80,
+ikj_long_context,kij,512,16384,64,Cycles Not in Halt,15990765138.0,80,199884564.225
+ikj_long_context,kij,512,16384,64,Utilization (%),0.68,80,
+ikj_long_context,kij,512,16384,64,System time (%),20.43,80,
+ikj_long_context,kij,512,16384,64,User time (%),79.7,80,
+ikj_long_context,kij,512,16384,64,System instructions (%),8.19,80,
+ikj_long_context,kij,512,16384,64,User instructions (%),91.81,80,
+ikj_long_context,kij,512,16384,64,Eff Freq (MHz),2848.93,80,
+ikj_long_context,kij,512,16384,64,IPC (Sys + User),1.51,80,
+ikj_long_context,kij,512,16384,64,IPC (Sys),0.61,80,
+ikj_long_context,kij,512,16384,64,IPC (User),1.74,80,
+ikj_long_context,kij,512,16384,64,CPI (Sys + User),0.66,80,
+ikj_long_context,kij,512,16384,64,CPI (Sys),1.65,80,
+ikj_long_context,kij,512,16384,64,CPI (User),0.57,80,
+ikj_long_context,kij,512,16384,64,Giga Instructions Per Sec,5.61,80,0.070125
+ikj_long_context,kij,512,16384,64,Locked Instructions (pti),0.0,80,0.0
+ikj_long_context,kij,512,16384,64,Retired Branches (pti),189.65,80,
+ikj_long_context,kij,512,16384,64,Retired Branches Mispredicted (pti),1.86,80,
+ikj_long_context,kij,512,16384,64,L2 Access (pti),159.71,80,1.996375
+ikj_long_context,kij,512,16384,64,L2 Access from IC Miss (pti),2.34,80,0.029249999999999998
+ikj_long_context,kij,512,16384,64,L2 Access from DC Miss (pti),123.19,80,1.5398749999999999
+ikj_long_context,kij,512,16384,64,L2 Access from L2 HWPF (pti),32.53,80,0.406625
+ikj_long_context,kij,512,16384,64,L2 Miss (pti),2.13,80,0.026625
+ikj_long_context,kij,512,16384,64,L2 Miss from IC Miss (pti),0.74,80,0.00925
+ikj_long_context,kij,512,16384,64,L2 Miss from DC Miss (pti),0.58,80,0.0072499999999999995
+ikj_long_context,kij,512,16384,64,L2 Miss from L2 HWPF (pti),0.81,80,0.010125
+ikj_long_context,kij,512,16384,64,L2 Hit (pti),158.32,80,
+ikj_long_context,kij,512,16384,64,L2 Hit from IC Miss (pti),1.45,80,0.018125
+ikj_long_context,kij,512,16384,64,L2 Hit from DC Miss (pti),125.15,80,1.564375
+ikj_long_context,kij,512,16384,64,L2 Hit from L2 HWPF (pti),31.71,80,
+ikj_long_context,kij,512,16384,64,L3 Access,84722454.0,80,1059030.675
+ikj_long_context,kij,512,16384,64,L3 Miss,49380807.0,80,617260.0875
+ikj_long_context,kij,512,16384,64,L3 Access (pti),1.59,80,0.019875
+ikj_long_context,kij,512,16384,64,L3 Miss (pti),0.92,80,0.0115
+ikj_long_context,kij,512,16384,64,L3 Miss %,58.29,80,
+ikj_long_context,kij,512,16384,64,L3 Hit %,41.71,80,
+ikj_long_context,kij,512,16384,64,Ave L3 Miss Latency (ns),116.26,80,
+ikj_long_context,kij,512,16384,64,L3 Miss Latency From Local Memory or I/O (%),71.22,80,
+ikj_long_context,kij,512,16384,64,L3 Miss Latency From Remote Memory or I/O (%),12.84,80,
+ikj_long_context,kij,512,16384,64,L3 Miss Latency From another CCX in same node (%),7.06,80,
+ikj_long_context,kij,512,16384,64,L3 Miss Latency From another CCX in remote node (%),8.1,80,
+ikj_long_context,kij,512,16384,64,L3 Miss Latency From Extension Memory (CXL) (%),0.0,80,
+ikj_long_context,kij,512,16384,64,Total Mem Bw (GB/s),0.67,80,
+ikj_long_context,kij,512,16384,64,Local DRAM Read Data Bytes(GB/s),0.59,80,
+ikj_long_context,kij,512,16384,64,Local DRAM Write Data Bytes(GB/s),0.01,80,
+ikj_long_context,kij,512,16384,64,Remote DRAM Read Data Bytes (GB/s),0.06,80,
+ikj_long_context,kij,512,16384,64,Remote DRAM Write Data Bytes (GB/s),0.0,80,
+ikj_long_context,kij,512,16384,64,Total Mem RdBw (GB/s),0.65,80,
+ikj_long_context,kij,512,16384,64,Total Mem WrBw (GB/s),0.01,80,
+ikj_after_crossover,ikj,512,8192,64,Retired Instructions,19087836918.0,128,149123725.921875
+ikj_after_crossover,ikj,512,8192,64,Retired Macro Ops,21008926524.0,128,
+ikj_after_crossover,ikj,512,8192,64,Cycles Not in Halt,15695172234.0,128,122618533.078125
+ikj_after_crossover,ikj,512,8192,64,Utilization (%),0.69,128,
+ikj_after_crossover,ikj,512,8192,64,System time (%),21.07,128,
+ikj_after_crossover,ikj,512,8192,64,User time (%),79.06,128,
+ikj_after_crossover,ikj,512,8192,64,System instructions (%),10.81,128,
+ikj_after_crossover,ikj,512,8192,64,User instructions (%),89.19,128,
+ikj_after_crossover,ikj,512,8192,64,Eff Freq (MHz),2823.7,128,
+ikj_after_crossover,ikj,512,8192,64,IPC (Sys + User),1.21,128,
+ikj_after_crossover,ikj,512,8192,64,IPC (Sys),0.62,128,
+ikj_after_crossover,ikj,512,8192,64,IPC (User),1.37,128,
+ikj_after_crossover,ikj,512,8192,64,CPI (Sys + User),0.83,128,
+ikj_after_crossover,ikj,512,8192,64,CPI (Sys),1.61,128,
+ikj_after_crossover,ikj,512,8192,64,CPI (User),0.73,128,
+ikj_after_crossover,ikj,512,8192,64,Giga Instructions Per Sec,4.54,128,0.03546875
+ikj_after_crossover,ikj,512,8192,64,Locked Instructions (pti),0.0,128,0.0
+ikj_after_crossover,ikj,512,8192,64,Retired Branches (pti),193.51,128,
+ikj_after_crossover,ikj,512,8192,64,Retired Branches Mispredicted (pti),2.05,128,
+ikj_after_crossover,ikj,512,8192,64,L2 Access (pti),177.01,128,1.382890625
+ikj_after_crossover,ikj,512,8192,64,L2 Access from IC Miss (pti),2.88,128,0.0225
+ikj_after_crossover,ikj,512,8192,64,L2 Access from DC Miss (pti),93.25,128,0.728515625
+ikj_after_crossover,ikj,512,8192,64,L2 Access from L2 HWPF (pti),80.9,128,0.63203125
+ikj_after_crossover,ikj,512,8192,64,L2 Miss (pti),77.12,128,0.6025
+ikj_after_crossover,ikj,512,8192,64,L2 Miss from IC Miss (pti),0.99,128,0.007734375
+ikj_after_crossover,ikj,512,8192,64,L2 Miss from DC Miss (pti),0.77,128,0.006015625
+ikj_after_crossover,ikj,512,8192,64,L2 Miss from L2 HWPF (pti),75.36,128,0.58875
+ikj_after_crossover,ikj,512,8192,64,L2 Hit (pti),100.35,128,
+ikj_after_crossover,ikj,512,8192,64,L2 Hit from IC Miss (pti),1.79,128,0.013984375
+ikj_after_crossover,ikj,512,8192,64,L2 Hit from DC Miss (pti),93.01,128,0.726640625
+ikj_after_crossover,ikj,512,8192,64,L2 Hit from L2 HWPF (pti),5.54,128,
+ikj_after_crossover,ikj,512,8192,64,L3 Access,1739499786.0,128,13589842.078125
+ikj_after_crossover,ikj,512,8192,64,L3 Miss,32458623.0,128,253582.9921875
+ikj_after_crossover,ikj,512,8192,64,L3 Access (pti),41.24,128,0.3221875
+ikj_after_crossover,ikj,512,8192,64,L3 Miss (pti),0.77,128,0.006015625
+ikj_after_crossover,ikj,512,8192,64,L3 Miss %,1.87,128,
+ikj_after_crossover,ikj,512,8192,64,L3 Hit %,98.13,128,
+ikj_after_crossover,ikj,512,8192,64,Ave L3 Miss Latency (ns),126.28,128,
+ikj_after_crossover,ikj,512,8192,64,L3 Miss Latency From Local Memory or I/O (%),60.72,128,
+ikj_after_crossover,ikj,512,8192,64,L3 Miss Latency From Remote Memory or I/O (%),17.21,128,
+ikj_after_crossover,ikj,512,8192,64,L3 Miss Latency From another CCX in same node (%),11.37,128,
+ikj_after_crossover,ikj,512,8192,64,L3 Miss Latency From another CCX in remote node (%),10.34,128,
+ikj_after_crossover,ikj,512,8192,64,L3 Miss Latency From Extension Memory (CXL) (%),0.0,128,
+ikj_after_crossover,ikj,512,8192,64,Total Mem Bw (GB/s),0.45,128,
+ikj_after_crossover,ikj,512,8192,64,Local DRAM Read Data Bytes(GB/s),0.38,128,
+ikj_after_crossover,ikj,512,8192,64,Local DRAM Write Data Bytes(GB/s),0.01,128,
+ikj_after_crossover,ikj,512,8192,64,Remote DRAM Read Data Bytes (GB/s),0.06,128,
+ikj_after_crossover,ikj,512,8192,64,Remote DRAM Write Data Bytes (GB/s),0.0,128,
+ikj_after_crossover,ikj,512,8192,64,Total Mem RdBw (GB/s),0.44,128,
+ikj_after_crossover,ikj,512,8192,64,Total Mem WrBw (GB/s),0.01,128,
+decode_control,ikj,1,8192,64,Retired Instructions,33123331260.0,121681,272214.4891971631
+decode_control,ikj,1,8192,64,Retired Macro Ops,36250739544.0,121681,
+decode_control,ikj,1,8192,64,Cycles Not in Halt,15735689892.0,121681,129319.2026035289
+decode_control,ikj,1,8192,64,Utilization (%),0.67,121681,
+decode_control,ikj,1,8192,64,System time (%),19.88,121681,
+decode_control,ikj,1,8192,64,User time (%),80.26,121681,
+decode_control,ikj,1,8192,64,System instructions (%),5.48,121681,
+decode_control,ikj,1,8192,64,User instructions (%),94.52,121681,
+decode_control,ikj,1,8192,64,Eff Freq (MHz),2863.37,121681,
+decode_control,ikj,1,8192,64,IPC (Sys + User),2.17,121681,
+decode_control,ikj,1,8192,64,IPC (Sys),0.6,121681,
+decode_control,ikj,1,8192,64,IPC (User),2.56,121681,
+decode_control,ikj,1,8192,64,CPI (Sys + User),0.46,121681,
+decode_control,ikj,1,8192,64,CPI (Sys),1.67,121681,
+decode_control,ikj,1,8192,64,CPI (User),0.39,121681,
+decode_control,ikj,1,8192,64,Giga Instructions Per Sec,8.02,121681,6.591004347433042e-05
+decode_control,ikj,1,8192,64,Locked Instructions (pti),0.0,121681,0.0
+decode_control,ikj,1,8192,64,Retired Branches (pti),192.76,121681,
+decode_control,ikj,1,8192,64,Retired Branches Mispredicted (pti),1.29,121681,
+decode_control,ikj,1,8192,64,L2 Access (pti),175.05,121681,0.00143859764466104
+decode_control,ikj,1,8192,64,L2 Access from IC Miss (pti),1.84,121681,1.5121506233512217e-05
+decode_control,ikj,1,8192,64,L2 Access from DC Miss (pti),87.87,121681,0.0007221341047493036
+decode_control,ikj,1,8192,64,L2 Access from L2 HWPF (pti),85.13,121681,0.0006996162095972254
+decode_control,ikj,1,8192,64,L2 Miss (pti),80.67,121681,0.0006629629934007774
+decode_control,ikj,1,8192,64,L2 Miss from IC Miss (pti),0.67,121681,5.506200639376732e-06
+decode_control,ikj,1,8192,64,L2 Miss from DC Miss (pti),0.94,121681,7.725117314946458e-06
+decode_control,ikj,1,8192,64,L2 Miss from L2 HWPF (pti),79.05,121681,0.000649649493347359
+decode_control,ikj,1,8192,64,L2 Hit (pti),93.79,121681,
+decode_control,ikj,1,8192,64,L2 Hit from IC Miss (pti),1.15,121681,9.450941395945135e-06
+decode_control,ikj,1,8192,64,L2 Hit from DC Miss (pti),86.56,121681,0.0007113682497678356
+decode_control,ikj,1,8192,64,L2 Hit from L2 HWPF (pti),6.08,121681,
+decode_control,ikj,1,8192,64,L3 Access,3290145945.0,121681,27039.11000895785
+decode_control,ikj,1,8192,64,L3 Miss,20078487.0,121681,165.0092208315185
+decode_control,ikj,1,8192,64,L3 Access (pti),43.36,121681,0.0003563415816766792
+decode_control,ikj,1,8192,64,L3 Miss (pti),0.26,121681,2.136734576474552e-06
+decode_control,ikj,1,8192,64,L3 Miss %,0.61,121681,
+decode_control,ikj,1,8192,64,L3 Hit %,99.39,121681,
+decode_control,ikj,1,8192,64,Ave L3 Miss Latency (ns),145.42,121681,
+decode_control,ikj,1,8192,64,L3 Miss Latency From Local Memory or I/O (%),34.5,121681,
+decode_control,ikj,1,8192,64,L3 Miss Latency From Remote Memory or I/O (%),27.83,121681,
+decode_control,ikj,1,8192,64,L3 Miss Latency From another CCX in same node (%),25.07,121681,
+decode_control,ikj,1,8192,64,L3 Miss Latency From another CCX in remote node (%),11.81,121681,
+decode_control,ikj,1,8192,64,L3 Miss Latency From Extension Memory (CXL) (%),0.0,121681,
+decode_control,ikj,1,8192,64,Total Mem Bw (GB/s),0.43,121681,
+decode_control,ikj,1,8192,64,Local DRAM Read Data Bytes(GB/s),0.36,121681,
+decode_control,ikj,1,8192,64,Local DRAM Write Data Bytes(GB/s),0.01,121681,
+decode_control,ikj,1,8192,64,Remote DRAM Read Data Bytes (GB/s),0.06,121681,
+decode_control,ikj,1,8192,64,Remote DRAM Write Data Bytes (GB/s),0.0,121681,
+decode_control,ikj,1,8192,64,Total Mem RdBw (GB/s),0.42,121681,
+decode_control,ikj,1,8192,64,Total Mem WrBw (GB/s),0.01,121681,
+kij_before_crossover,kij,512,2048,64,Retired Instructions,28536905094.0,800,35671131.3675
+kij_before_crossover,kij,512,2048,64,Retired Macro Ops,31211273136.0,800,
+kij_before_crossover,kij,512,2048,64,Cycles Not in Halt,15495700680.0,800,19369625.85
+kij_before_crossover,kij,512,2048,64,Utilization (%),0.66,800,
+kij_before_crossover,kij,512,2048,64,System time (%),19.42,800,
+kij_before_crossover,kij,512,2048,64,User time (%),80.71,800,
+kij_before_crossover,kij,512,2048,64,System instructions (%),6.21,800,
+kij_before_crossover,kij,512,2048,64,User instructions (%),93.79,800,
+kij_before_crossover,kij,512,2048,64,Eff Freq (MHz),2875.06,800,
+kij_before_crossover,kij,512,2048,64,IPC (Sys + User),1.88,800,
+kij_before_crossover,kij,512,2048,64,IPC (Sys),0.6,800,
+kij_before_crossover,kij,512,2048,64,IPC (User),2.19,800,
+kij_before_crossover,kij,512,2048,64,CPI (Sys + User),0.53,800,
+kij_before_crossover,kij,512,2048,64,CPI (Sys),1.66,800,
+kij_before_crossover,kij,512,2048,64,CPI (User),0.46,800,
+kij_before_crossover,kij,512,2048,64,Giga Instructions Per Sec,6.9,800,0.008625
+kij_before_crossover,kij,512,2048,64,Locked Instructions (pti),0.0,800,0.0
+kij_before_crossover,kij,512,2048,64,Retired Branches (pti),189.07,800,
+kij_before_crossover,kij,512,2048,64,Retired Branches Mispredicted (pti),1.41,800,
+kij_before_crossover,kij,512,2048,64,L2 Access (pti),178.63,800,0.2232875
+kij_before_crossover,kij,512,2048,64,L2 Access from IC Miss (pti),1.93,800,0.0024124999999999997
+kij_before_crossover,kij,512,2048,64,L2 Access from DC Miss (pti),104.24,800,0.1303
+kij_before_crossover,kij,512,2048,64,L2 Access from L2 HWPF (pti),73.79,800,0.09223750000000001
+kij_before_crossover,kij,512,2048,64,L2 Miss (pti),2.7,800,0.0033750000000000004
+kij_before_crossover,kij,512,2048,64,L2 Miss from IC Miss (pti),0.7,800,0.0008749999999999999
+kij_before_crossover,kij,512,2048,64,L2 Miss from DC Miss (pti),0.44,800,0.00055
+kij_before_crossover,kij,512,2048,64,L2 Miss from L2 HWPF (pti),1.56,800,0.0019500000000000001
+kij_before_crossover,kij,512,2048,64,L2 Hit (pti),177.26,800,
+kij_before_crossover,kij,512,2048,64,L2 Hit from IC Miss (pti),1.26,800,0.001575
+kij_before_crossover,kij,512,2048,64,L2 Hit from DC Miss (pti),103.78,800,0.129725
+kij_before_crossover,kij,512,2048,64,L2 Hit from L2 HWPF (pti),72.23,800,
+kij_before_crossover,kij,512,2048,64,L3 Access,97537170.0,800,121921.4625
+kij_before_crossover,kij,512,2048,64,L3 Miss,20829024.0,800,26036.28
+kij_before_crossover,kij,512,2048,64,L3 Access (pti),1.49,800,0.0018625
+kij_before_crossover,kij,512,2048,64,L3 Miss (pti),0.32,800,0.0004
+kij_before_crossover,kij,512,2048,64,L3 Miss %,21.35,800,
+kij_before_crossover,kij,512,2048,64,L3 Hit %,78.65,800,
+kij_before_crossover,kij,512,2048,64,Ave L3 Miss Latency (ns),140.65,800,
+kij_before_crossover,kij,512,2048,64,L3 Miss Latency From Local Memory or I/O (%),40.67,800,
+kij_before_crossover,kij,512,2048,64,L3 Miss Latency From Remote Memory or I/O (%),25.47,800,
+kij_before_crossover,kij,512,2048,64,L3 Miss Latency From another CCX in same node (%),20.58,800,
+kij_before_crossover,kij,512,2048,64,L3 Miss Latency From another CCX in remote node (%),12.27,800,
+kij_before_crossover,kij,512,2048,64,L3 Miss Latency From Extension Memory (CXL) (%),0.0,800,
+kij_before_crossover,kij,512,2048,64,Total Mem Bw (GB/s),0.31,800,
+kij_before_crossover,kij,512,2048,64,Local DRAM Read Data Bytes(GB/s),0.24,800,
+kij_before_crossover,kij,512,2048,64,Local DRAM Write Data Bytes(GB/s),0.01,800,
+kij_before_crossover,kij,512,2048,64,Remote DRAM Read Data Bytes (GB/s),0.05,800,
+kij_before_crossover,kij,512,2048,64,Remote DRAM Write Data Bytes (GB/s),0.0,800,
+kij_before_crossover,kij,512,2048,64,Total Mem RdBw (GB/s),0.29,800,
+kij_before_crossover,kij,512,2048,64,Total Mem WrBw (GB/s),0.01,800,
+ikj_long_context,ikj,512,16384,64,Retired Instructions,21418113702.0,64,334658026.59375
+ikj_long_context,ikj,512,16384,64,Retired Macro Ops,23542694574.0,64,
+ikj_long_context,ikj,512,16384,64,Cycles Not in Halt,16804808046.0,64,262575125.71875
+ikj_long_context,ikj,512,16384,64,Utilization (%),0.67,64,
+ikj_long_context,ikj,512,16384,64,System time (%),19.61,64,
+ikj_long_context,ikj,512,16384,64,User time (%),80.54,64,
+ikj_long_context,ikj,512,16384,64,System instructions (%),9.59,64,
+ikj_long_context,ikj,512,16384,64,User instructions (%),90.41,64,
+ikj_long_context,ikj,512,16384,64,Eff Freq (MHz),2873.32,64,
+ikj_long_context,ikj,512,16384,64,IPC (Sys + User),1.21,64,
+ikj_long_context,ikj,512,16384,64,IPC (Sys),0.59,64,
+ikj_long_context,ikj,512,16384,64,IPC (User),1.36,64,
+ikj_long_context,ikj,512,16384,64,CPI (Sys + User),0.82,64,
+ikj_long_context,ikj,512,16384,64,CPI (Sys),1.68,64,
+ikj_long_context,ikj,512,16384,64,CPI (User),0.73,64,
+ikj_long_context,ikj,512,16384,64,Giga Instructions Per Sec,4.46,64,0.0696875
+ikj_long_context,ikj,512,16384,64,Locked Instructions (pti),0.0,64,0.0
+ikj_long_context,ikj,512,16384,64,Retired Branches (pti),193.59,64,
+ikj_long_context,ikj,512,16384,64,Retired Branches Mispredicted (pti),2.09,64,
+ikj_long_context,ikj,512,16384,64,L2 Access (pti),176.64,64,2.76
+ikj_long_context,ikj,512,16384,64,L2 Access from IC Miss (pti),3.64,64,0.056875
+ikj_long_context,ikj,512,16384,64,L2 Access from DC Miss (pti),91.85,64,1.43515625
+ikj_long_context,ikj,512,16384,64,L2 Access from L2 HWPF (pti),80.52,64,1.258125
+ikj_long_context,ikj,512,16384,64,L2 Miss (pti),80.01,64,1.25015625
+ikj_long_context,ikj,512,16384,64,L2 Miss from IC Miss (pti),1.0,64,0.015625
+ikj_long_context,ikj,512,16384,64,L2 Miss from DC Miss (pti),0.52,64,0.008125
+ikj_long_context,ikj,512,16384,64,L2 Miss from L2 HWPF (pti),78.48,64,1.22625
+ikj_long_context,ikj,512,16384,64,L2 Hit (pti),95.56,64,
+ikj_long_context,ikj,512,16384,64,L2 Hit from IC Miss (pti),1.87,64,0.02921875
+ikj_long_context,ikj,512,16384,64,L2 Hit from DC Miss (pti),91.64,64,1.431875
+ikj_long_context,ikj,512,16384,64,L2 Hit from L2 HWPF (pti),2.04,64,
+ikj_long_context,ikj,512,16384,64,L3 Access,1823436489.0,64,28491195.140625
+ikj_long_context,ikj,512,16384,64,L3 Miss,48578697.0,64,759042.140625
+ikj_long_context,ikj,512,16384,64,L3 Access (pti),43.21,64,0.67515625
+ikj_long_context,ikj,512,16384,64,L3 Miss (pti),1.15,64,0.01796875
+ikj_long_context,ikj,512,16384,64,L3 Miss %,2.66,64,
+ikj_long_context,ikj,512,16384,64,L3 Hit %,97.34,64,
+ikj_long_context,ikj,512,16384,64,Ave L3 Miss Latency (ns),118.23,64,
+ikj_long_context,ikj,512,16384,64,L3 Miss Latency From Local Memory or I/O (%),73.06,64,
+ikj_long_context,ikj,512,16384,64,L3 Miss Latency From Remote Memory or I/O (%),11.01,64,
+ikj_long_context,ikj,512,16384,64,L3 Miss Latency From another CCX in same node (%),7.05,64,
+ikj_long_context,ikj,512,16384,64,L3 Miss Latency From another CCX in remote node (%),8.05,64,
+ikj_long_context,ikj,512,16384,64,L3 Miss Latency From Extension Memory (CXL) (%),0.0,64,
+ikj_long_context,ikj,512,16384,64,Total Mem Bw (GB/s),0.62,64,
+ikj_long_context,ikj,512,16384,64,Local DRAM Read Data Bytes(GB/s),0.55,64,
+ikj_long_context,ikj,512,16384,64,Local DRAM Write Data Bytes(GB/s),0.01,64,
+ikj_long_context,ikj,512,16384,64,Remote DRAM Read Data Bytes (GB/s),0.06,64,
+ikj_long_context,ikj,512,16384,64,Remote DRAM Write Data Bytes (GB/s),0.0,64,
+ikj_long_context,ikj,512,16384,64,Total Mem RdBw (GB/s),0.61,64,
+ikj_long_context,ikj,512,16384,64,Total Mem WrBw (GB/s),0.01,64,
+decode_control,kij,1,8192,64,Retired Instructions,43294357386.0,117082,369778.08190840605
+decode_control,kij,1,8192,64,Retired Macro Ops,46334362248.0,117082,
+decode_control,kij,1,8192,64,Cycles Not in Halt,15616697676.0,117082,133382.566713927
+decode_control,kij,1,8192,64,Utilization (%),0.7,117082,
+decode_control,kij,1,8192,64,System time (%),20.1,117082,
+decode_control,kij,1,8192,64,User time (%),80.05,117082,
+decode_control,kij,1,8192,64,System instructions (%),3.96,117082,
+decode_control,kij,1,8192,64,User instructions (%),96.04,117082,
+decode_control,kij,1,8192,64,Eff Freq (MHz),2805.33,117082,
+decode_control,kij,1,8192,64,IPC (Sys + User),2.78,117082,
+decode_control,kij,1,8192,64,IPC (Sys),0.55,117082,
+decode_control,kij,1,8192,64,IPC (User),3.34,117082,
+decode_control,kij,1,8192,64,CPI (Sys + User),0.36,117082,
+decode_control,kij,1,8192,64,CPI (Sys),1.82,117082,
+decode_control,kij,1,8192,64,CPI (User),0.3,117082,
+decode_control,kij,1,8192,64,Giga Instructions Per Sec,10.45,117082,8.925368545122221e-05
+decode_control,kij,1,8192,64,Locked Instructions (pti),0.0,117082,0.0
+decode_control,kij,1,8192,64,Retired Branches (pti),173.85,117082,
+decode_control,kij,1,8192,64,Retired Branches Mispredicted (pti),1.07,117082,
+decode_control,kij,1,8192,64,L2 Access (pti),129.74,117082,0.0011081122632001503
+decode_control,kij,1,8192,64,L2 Access from IC Miss (pti),1.47,117082,1.2555303120889633e-05
+decode_control,kij,1,8192,64,L2 Access from DC Miss (pti),62.82,117082,0.0005365470354110794
+decode_control,kij,1,8192,64,L2 Access from L2 HWPF (pti),65.58,117082,0.0005601202575972395
+decode_control,kij,1,8192,64,L2 Miss (pti),60.54,117082,0.0005170735040399036
+decode_control,kij,1,8192,64,L2 Miss from IC Miss (pti),0.62,117082,5.295433969354811e-06
+decode_control,kij,1,8192,64,L2 Miss from DC Miss (pti),1.1,117082,9.395124784339182e-06
+decode_control,kij,1,8192,64,L2 Miss from L2 HWPF (pti),58.82,117082,0.0005023829452862097
+decode_control,kij,1,8192,64,L2 Hit (pti),68.64,117082,
+decode_control,kij,1,8192,64,L2 Hit from IC Miss (pti),0.98,117082,8.370202080593088e-06
+decode_control,kij,1,8192,64,L2 Hit from DC Miss (pti),60.91,117082,0.0005202336823764541
+decode_control,kij,1,8192,64,L2 Hit from L2 HWPF (pti),6.75,117082,
+decode_control,kij,1,8192,64,L3 Access,3206473680.0,117082,27386.56394663569
+decode_control,kij,1,8192,64,L3 Miss,18953730.0,117082,161.88423498061186
+decode_control,kij,1,8192,64,L3 Access (pti),32.2,117082,0.0002750209255052015
+decode_control,kij,1,8192,64,L3 Miss (pti),0.19,117082,1.622794280931313e-06
+decode_control,kij,1,8192,64,L3 Miss %,0.59,117082,
+decode_control,kij,1,8192,64,L3 Hit %,99.41,117082,
+decode_control,kij,1,8192,64,Ave L3 Miss Latency (ns),149.47,117082,
+decode_control,kij,1,8192,64,L3 Miss Latency From Local Memory or I/O (%),35.54,117082,
+decode_control,kij,1,8192,64,L3 Miss Latency From Remote Memory or I/O (%),27.47,117082,
+decode_control,kij,1,8192,64,L3 Miss Latency From another CCX in same node (%),20.66,117082,
+decode_control,kij,1,8192,64,L3 Miss Latency From another CCX in remote node (%),16.47,117082,
+decode_control,kij,1,8192,64,L3 Miss Latency From Extension Memory (CXL) (%),0.0,117082,
+decode_control,kij,1,8192,64,Total Mem Bw (GB/s),0.57,117082,
+decode_control,kij,1,8192,64,Local DRAM Read Data Bytes(GB/s),0.49,117082,
+decode_control,kij,1,8192,64,Local DRAM Write Data Bytes(GB/s),0.01,117082,
+decode_control,kij,1,8192,64,Remote DRAM Read Data Bytes (GB/s),0.07,117082,
+decode_control,kij,1,8192,64,Remote DRAM Write Data Bytes (GB/s),0.0,117082,
+decode_control,kij,1,8192,64,Total Mem RdBw (GB/s),0.56,117082,
+decode_control,kij,1,8192,64,Total Mem WrBw (GB/s),0.02,117082,
