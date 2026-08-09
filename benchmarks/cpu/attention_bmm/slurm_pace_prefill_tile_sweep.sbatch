@@ -29,7 +29,11 @@ source "${PACE_VENV}/bin/activate"
 
 # The native library must be rebuilt because query-tile selection is C++ code.
 "${PYTHON}" setup.py build_clib
-cp build/Release/pace/lib/libpace_cpp.so pace/lib/libpace_cpp.so
+BUILT_LIB="build/Release/pace/lib/libpace_cpp.so"
+TARGET_LIB="pace/lib/libpace_cpp.so"
+if [[ ! "${BUILT_LIB}" -ef "${TARGET_LIB}" ]]; then
+    cp "${BUILT_LIB}" "${TARGET_LIB}"
+fi
 
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-96}"
 export OMP_PLACES=cores

@@ -61,7 +61,13 @@ def safe_name(text: str) -> str:
 
 def is_cumulative_metric(name: str) -> bool:
     normalized = name.lower()
-    if "%" in name or "latency" in normalized or "bw" in normalized:
+    if (
+        "%" in name
+        or "latency" in normalized
+        or "bw" in normalized
+        or "per sec" in normalized
+        or any(unit in normalized for unit in ("(pti)", "(ptc)", "(pto)"))
+    ):
         return False
     return any(
         token in normalized
