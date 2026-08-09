@@ -26,6 +26,7 @@
 #include <ops/attention/slab/slab_pool.h>
 #include <omp.h>
 #include <chrono>
+#include <cstdlib>
 
 namespace pace {
 namespace kernels {
@@ -61,6 +62,18 @@ struct WorkItem {
   int64_t seq_idx;
   int64_t arg0, arg1;
 };
+
+int64_t prefill_query_tile() {
+  const char* value = std::getenv("PACE_SLAB_PREFILL_Q_TILE");
+  if (!value)
+    return SLAB_DEFAULT_Q_TILE;
+  const int64_t tile = std::strtoll(value, nullptr, 10);
+  TORCH_CHECK(
+      tile == 16 || tile == 32 || tile == 64 || tile == 128,
+      "PACE_SLAB_PREFILL_Q_TILE must be one of 16, 32, 64, or 128; got ",
+      value);
+  return tile;
+}
 
 } // anonymous namespace
 
@@ -123,6 +136,7 @@ at::Tensor SlabPool::attention(
   const int64_t n_rep = num_q_heads / num_kv;
   const int64_t blk_size = this->block_size;
   const int64_t total_tokens = query.size(0);
+  const int64_t query_tile = prefill_query_tile();
 
   TORCH_CHECK(
       n_rep <= SLAB_MAX_REP,
@@ -205,13 +219,13 @@ at::Tensor SlabPool::attention(
           si.n_work = num_q_heads;
         }
       }
-    } else if (si.q_len <= SLAB_Q_TILE) {
+    } else if (si.q_len <= SLAB_MTD_MAX_Q) {
       si.type = SeqType::MTD;
       si.n_work = num_q_heads * si.q_len;
       ++n_mtd_seqs;
     } else {
       si.type = SeqType::PREFILL;
-      const int64_t n_qt = (si.q_len + SLAB_Q_TILE - 1) / SLAB_Q_TILE;
+      const int64_t n_qt = (si.q_len + query_tile - 1) / query_tile;
       si.n_work = num_kv * n_qt;
       ++n_prefill_seqs;
     }
@@ -269,7 +283,7 @@ at::Tensor SlabPool::attention(
             work_items[wi++] = {i, qh, qr};
         break;
       case SeqType::PREFILL: {
-        const int64_t n_qt = (si.q_len + SLAB_Q_TILE - 1) / SLAB_Q_TILE;
+        const int64_t n_qt = (si.q_len + query_tile - 1) / query_tile;
         for (int64_t kv_h = 0; kv_h < num_kv; ++kv_h)
           for (int64_t qt = 0; qt < n_qt; ++qt)
             work_items[wi++] = {i, kv_h, qt};
@@ -336,6 +350,8 @@ at::Tensor SlabPool::attention(
       num_kv,
       ",head_dim=",
       head_dim,
+      ",prefill_query_tile=",
+      query_tile,
       ",work_items=",
       total_work,
       ",decode_sequences=",
@@ -454,7 +470,8 @@ at::Tensor SlabPool::attention(
           si.q_offset,
           si.blocks,
           item.arg0,
-          item.arg1);
+          item.arg1,
+          query_tile);
     }
   };
 

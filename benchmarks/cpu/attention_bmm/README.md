@@ -138,3 +138,55 @@ sbatch benchmarks/cpu/attention_bmm/slurm_pv_loop_crossover.sbatch
 Results are written to `benchmark_results/cpu-pv-crossover/<job_id>/`. The
 generated `pv_crossover_report.md` states how many pre-registered workloads
 matched the claim and lists every counterexample automatically.
+
+## Hardware-Counter Validation
+
+The selected uProf run isolates each loop order in its own process for four
+cases: a decode control, the `kij` side of the SLM `M=512` crossover, and the
+two long-context `ikj` cases. Each process spends at least five seconds in one
+kernel so setup is a small fraction of process-level PCM totals.
+
+```bash
+sbatch benchmarks/cpu/attention_bmm/slurm_pv_crossover_uprof.sbatch
+```
+
+Results are written to `benchmark_results/cpu-pv-crossover-uprof/<job_id>/`.
+`pv_uprof_metrics.csv` contains all parsed IPC, L2, L3, and memory metrics in
+one long-form table; `raw/` preserves the complete AMD uProf reports.
+
+## Real SlabPool Prefill Tile Sweep
+
+PACE prefill already computes `QK^T` and softmax-times-V with tiled BF16
+oneDNN BRGeMM rather than scalar loops. `PACE_SLAB_PREFILL_Q_TILE` therefore
+exposes the corresponding production tuning knob while retaining `64` as the
+default. Valid values are `16,32,64,128`; decode and MTD dispatch are unchanged.
+
+The real-kernel sweep covers SLM/LLM shapes, query lengths `128,512`, KV
+lengths `2048,8192,16384`, batch sizes `1,4`, four tiles, three random inputs,
+two warmups, and 20 measurements. It checks every candidate output against the
+default tile and automatically recommends a non-default tile only when it is
+at least 5% faster, wins at least 80% of paired rounds, has a bootstrap CI above
+one, and does not regress p95.
+
+```bash
+sbatch benchmarks/cpu/attention_bmm/slurm_pace_prefill_tile_sweep.sbatch
+```
+
+Run this one-workload smoke test first:
+
+```bash
+PACE_TILE_SHAPES=slm \
+PACE_TILE_QUERY_LENS=128 \
+PACE_TILE_KV_LENS=2048 \
+PACE_TILE_BATCH_SIZES=1 \
+PACE_TILE_DATA_SEEDS=11 \
+PACE_TILE_WARMUPS=1 \
+PACE_TILE_REPEATS=3 \
+  sbatch --export=ALL \
+  benchmarks/cpu/attention_bmm/slurm_pace_prefill_tile_sweep.sbatch
+```
+
+This job rebuilds the native PACE library because the selectable tile is C++
+code. Results are written to `benchmark_results/pace-prefill-tile/<job_id>/`,
+including raw trials, per-tile summaries, workload decisions, environment
+metadata, and a ready-to-read Markdown report.

@@ -12,6 +12,7 @@ Run: python -m unittest -v tests.attention.test_slab_attention
 """
 
 import math
+import os
 
 import torch
 from torch.testing._internal.common_utils import TestCase
@@ -70,6 +71,33 @@ def _setup_pool_with_kv(bs, seq_len, h_kv, d, blk_size=16, max_seq=None):
 
 
 class TestSlabCausalAttention(TestCase):
+    def test_prefill_query_tile_variants(self):
+        """Runtime prefill tiles preserve BF16 attention correctness."""
+        bs, seq_len, h_q, h_kv, head_dim = 1, 128, 8, 4, 64
+        scale = 1.0 / math.sqrt(head_dim)
+        pool, seq_ids, k, v = _setup_pool_with_kv(
+            bs, seq_len, h_kv, head_dim, blk_size=64
+        )
+        query = torch.randn(bs, seq_len, h_q, head_dim, dtype=torch.bfloat16)
+        k_expanded = k.repeat_interleave(h_q // h_kv, dim=2)
+        v_expanded = v.repeat_interleave(h_q // h_kv, dim=2)
+        reference = _reference_causal_attention(
+            query, k_expanded, v_expanded, scale
+        )
+        previous = os.environ.get("PACE_SLAB_PREFILL_Q_TILE")
+        try:
+            for tile in (16, 32, 64, 128):
+                os.environ["PACE_SLAB_PREFILL_Q_TILE"] = str(tile)
+                output = pool.attention(
+                    seq_ids, query, [seq_len], [], scale, 0, torch.tensor([])
+                )
+                self.assertEqual(output, reference, atol=BF16_ATOL, rtol=BF16_RTOL)
+        finally:
+            if previous is None:
+                os.environ.pop("PACE_SLAB_PREFILL_Q_TILE", None)
+            else:
+                os.environ["PACE_SLAB_PREFILL_Q_TILE"] = previous
+
     def test_prefill_accuracy(self):
         """Prefill matches PyTorch SDPA within BF16 tolerance."""
         BS, S, H_q, H_kv, D = 1, 32, 8, 4, 64

@@ -25,7 +25,8 @@ namespace pace {
 namespace kernels {
 
 // Constants
-constexpr int64_t SLAB_Q_TILE = 64;
+constexpr int64_t SLAB_DEFAULT_Q_TILE = 64;
+constexpr int64_t SLAB_MTD_MAX_Q = 64;
 constexpr int64_t SLAB_N_MAX = 64;
 constexpr int64_t SLAB_MAX_REP = 16;
 constexpr int64_t SLAB_MAX_SPLITS = 16;
@@ -60,7 +61,8 @@ void prefill_tile(
     int64_t q_offset,
     const std::vector<int64_t>& block_indices,
     int64_t kv_h,
-    int64_t qt);
+    int64_t qt,
+    int64_t query_tile);
 
 namespace impl {
 

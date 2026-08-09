@@ -194,15 +194,16 @@ void prefill_tile(
     int64_t q_offset,
     const std::vector<int64_t>& block_indices,
     int64_t kv_h,
-    int64_t qt) {
+    int64_t qt,
+    int64_t query_tile) {
   auto& c = tl_prefill_cache;
   const int64_t aq = std::min(q_len, kv_len);
-  const int64_t qs = qt * SLAB_Q_TILE;
+  const int64_t qs = qt * query_tile;
   if (qs >= aq)
     return;
-  const int64_t qe = std::min(qs + SLAB_Q_TILE, aq);
+  const int64_t qe = std::min(qs + query_tile, aq);
   const int64_t tile_q = qe - qs;
-  const int64_t padded_tile_q = SLAB_Q_TILE;
+  const int64_t padded_tile_q = query_tile;
   const int64_t n_blks = (kv_len + ctx.blk_size - 1) / ctx.blk_size;
   const int64_t n_rep = ctx.n_rep;
   const int64_t head_dim = ctx.head_dim;
