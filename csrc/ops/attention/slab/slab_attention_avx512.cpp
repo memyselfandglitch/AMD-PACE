@@ -21,9 +21,11 @@
  * balances uneven work. SLAB_SCHEDULE env var overrides for testing.
  ******************************************************************************/
 
-#include <omp.h>
+#include <core/logging.h>
 #include <ops/attention/slab/slab_kernels.h>
 #include <ops/attention/slab/slab_pool.h>
+#include <omp.h>
+#include <chrono>
 
 namespace pace {
 namespace kernels {
@@ -105,6 +107,8 @@ at::Tensor SlabPool::attention(
     return out.reshape({B, S, H, D});
   }
 
+  PROFILE_PACE_FUNCTION("slab_attention");
+
   const int64_t n_seq = static_cast<int64_t>(sequence_ids.size());
   const int64_t num_q_heads = query.size(1);
   const int64_t head_dim = query.size(2);
@@ -133,6 +137,9 @@ at::Tensor SlabPool::attention(
   std::vector<SeqWorkInfo> seq_infos(static_cast<size_t>(n_seq));
   int64_t total_work = 0;
   int64_t n_decode_seqs = 0;
+  int64_t n_mtd_seqs = 0;
+  int64_t n_prefill_seqs = 0;
+  int64_t total_kv_tokens = 0;
   {
     int64_t q_off = 0;
     std::lock_guard<std::mutex> lock(sequence_mutex);
@@ -154,6 +161,7 @@ at::Tensor SlabPool::attention(
       } else {
         si.kv_len = 0;
       }
+      total_kv_tokens += si.kv_len;
 
       if (si.q_len == 1)
         ++n_decode_seqs;
@@ -200,10 +208,12 @@ at::Tensor SlabPool::attention(
     } else if (si.q_len <= SLAB_Q_TILE) {
       si.type = SeqType::MTD;
       si.n_work = num_q_heads * si.q_len;
+      ++n_mtd_seqs;
     } else {
       si.type = SeqType::PREFILL;
       const int64_t n_qt = (si.q_len + SLAB_Q_TILE - 1) / SLAB_Q_TILE;
       si.n_work = num_kv * n_qt;
+      ++n_prefill_seqs;
     }
     si.work_start = total_work;
     total_work += si.n_work;
@@ -297,15 +307,47 @@ at::Tensor SlabPool::attention(
   // prefill items take 10-100x longer than decode items.
   // SLAB_SCHEDULE env: "static" or "dynamic" to force; unset = auto.
   bool use_static = false;
+  const char* requested_schedule = "auto";
   {
     static const char* sched_env = std::getenv("SLAB_SCHEDULE");
     if (sched_env) {
+      requested_schedule = sched_env;
       use_static = (std::string(sched_env) == "static");
     } else {
       const bool mixed = (n_decode_seqs > 0 && n_decode_seqs < n_seq);
       use_static = !mixed && (total_work <= num_threads);
     }
   }
+
+  PROFILE_ADD_INFO(
+      "layout=",
+      this->block_major ? "block_major" : "head_major",
+      ",block_size=",
+      blk_size,
+      ",sequences=",
+      n_seq,
+      ",query_tokens=",
+      total_tokens,
+      ",kv_tokens=",
+      total_kv_tokens,
+      ",num_q_heads=",
+      num_q_heads,
+      ",num_kv_heads=",
+      num_kv,
+      ",head_dim=",
+      head_dim,
+      ",work_items=",
+      total_work,
+      ",decode_sequences=",
+      n_decode_seqs,
+      ",mtd_sequences=",
+      n_mtd_seqs,
+      ",prefill_sequences=",
+      n_prefill_seqs,
+      ",requested_schedule=",
+      requested_schedule,
+      ",selected_schedule=",
+      use_static ? "static" : "dynamic");
 
   auto dispatch_one = [&](int64_t wi) {
     const auto& item = work_items[wi];
@@ -416,6 +458,7 @@ at::Tensor SlabPool::attention(
     }
   };
 
+  const auto dispatch_start = std::chrono::high_resolution_clock::now();
   if (use_static) {
 #pragma omp parallel for schedule(static)
     for (int64_t wi = 0; wi < total_work; ++wi)
@@ -425,8 +468,10 @@ at::Tensor SlabPool::attention(
     for (int64_t wi = 0; wi < total_work; ++wi)
       dispatch_one(wi);
   }
+  const auto dispatch_end = std::chrono::high_resolution_clock::now();
 
   // Split-K reduction
+  const auto reduction_start = std::chrono::high_resolution_clock::now();
   if (total_partials > 0) {
     for (int64_t i = 0; i < n_seq; ++i) {
       const auto& si = seq_infos[i];
@@ -452,6 +497,17 @@ at::Tensor SlabPool::attention(
       }
     }
   }
+  const auto reduction_end = std::chrono::high_resolution_clock::now();
+
+  PROFILE_ADD_INFO(
+      ",dispatch_ms=",
+      std::chrono::duration<double, std::milli>(dispatch_end - dispatch_start)
+          .count(),
+      ",reduction_ms=",
+      std::chrono::duration<double, std::milli>(reduction_end - reduction_start)
+          .count(),
+      ",splitk_partials=",
+      total_partials);
 
   return output;
 }

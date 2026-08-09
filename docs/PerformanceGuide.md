@@ -218,6 +218,22 @@ python your_script.py
 
 This activates `PROFILE_PACE_FUNCTION` scopes in the C++ ops. When each op completes, a log line is emitted with the op name and duration in milliseconds. Additional info (shapes, sizes) is logged via `PROFILE_ADD_INFO` macros where implemented.
 
+SlabPool profiling includes these coarse-grained scopes:
+
+| Scope | What it measures |
+|-------|------------------|
+| `slab_pool_create` | BF16 pool allocation and initialization |
+| `slab_sequence_create`, `slab_sequence_remove`, `slab_sequence_truncate` | Sequence and block-table management |
+| `slab_cache_update` | Complete cache management, with `prepare_ms` (lookup/allocation) and `copy_ms` fields |
+| `slab_attention` | Complete attention, with `dispatch_ms` and `reduction_ms` fields |
+
+The log metadata records the selected layout, block size, tensor dimensions,
+token counts, copy bytes, work-item count, and OpenMP schedule where relevant.
+Stage timings are attached to one operation-level log line so logging I/O does
+not occur between the measured stages.
+Use unprofiled runs for authoritative latency numbers; profile logging adds
+timing and output overhead and is intended to explain where time is spent.
+
 For server metrics (TTFT, TPOT, throughput), see [InferenceServerMonitoring.md](InferenceServerMonitoring.md).
 
 

@@ -10,10 +10,12 @@
  * cache_update() lives here and handles both 3D and 4D likewise.
  ******************************************************************************/
 
-#include <omp.h>
+#include <core/logging.h>
 #include <ops/attention/slab/dpbf16_kernels.h>
 #include <ops/attention/slab/slab_kernels.h>
 #include <ops/attention/slab/slab_pool.h>
+#include <omp.h>
+#include <chrono>
 #include <cstring>
 #include <fstream>
 
@@ -104,6 +106,7 @@ SlabPool::SlabPool(
     int64_t num_kv_heads,
     int64_t head_dim,
     int64_t block_size) {
+  PROFILE_PACE_FUNCTION("slab_pool_create");
   TORCH_CHECK(
       block_size > 0 && block_size <= 256 && block_size % 16 == 0,
       "SlabPool: block_size=",
@@ -176,6 +179,20 @@ SlabPool::SlabPool(
     this->blocks[i].block_index = -1;
     this->free_list.push_back(total_blocks - 1 - i);
   }
+
+  PROFILE_ADD_INFO(
+      "layout=",
+      this->block_major ? "block_major" : "head_major",
+      ",block_size=",
+      block_size,
+      ",total_blocks=",
+      total_blocks,
+      ",num_kv_heads=",
+      num_kv_heads,
+      ",head_dim=",
+      head_dim,
+      ",pool_bytes=",
+      pool_tensor.numel() * pool_tensor.element_size());
 }
 
 // Pool Query
@@ -186,7 +203,15 @@ int64_t SlabPool::get_free_block_count() {
 
 // Sequence Management
 void SlabPool::create_sequence(int64_t seq_id, int64_t max_seq_len) {
+  PROFILE_PACE_FUNCTION("slab_sequence_create");
   int64_t blocks_needed = (max_seq_len + block_size - 1) / block_size;
+  PROFILE_ADD_INFO(
+      "sequence_id=",
+      seq_id,
+      ",max_seq_len=",
+      max_seq_len,
+      ",reserved_blocks=",
+      blocks_needed);
 
   SequenceState seq_state;
   seq_state.sequence_id = seq_id;
@@ -206,6 +231,7 @@ void SlabPool::create_sequence(int64_t seq_id, int64_t max_seq_len) {
 }
 
 void SlabPool::remove_sequence(int64_t sequence_id) {
+  PROFILE_PACE_FUNCTION("slab_sequence_remove");
   std::lock_guard<std::mutex> seq_lock(sequence_mutex);
 
   auto it = sequences.find(sequence_id);
@@ -213,6 +239,13 @@ void SlabPool::remove_sequence(int64_t sequence_id) {
       it != sequences.end(), "SlabPool: sequence ", sequence_id, " not found");
 
   SequenceState& seq = it->second;
+  PROFILE_ADD_INFO(
+      "sequence_id=",
+      sequence_id,
+      ",seq_len=",
+      seq.seq_len,
+      ",released_blocks=",
+      seq.block_indices.size());
 
   {
     std::lock_guard<std::mutex> pool_lock(pool_mutex);
@@ -229,6 +262,7 @@ void SlabPool::remove_sequence(int64_t sequence_id) {
 }
 
 void SlabPool::truncate_sequence(int64_t sequence_id, int64_t remove_len) {
+  PROFILE_PACE_FUNCTION("slab_sequence_truncate");
   TORCH_CHECK(remove_len >= 0, "SlabPool: remove_len must be non-negative");
 
   std::lock_guard<std::mutex> seq_lock(sequence_mutex);
@@ -251,6 +285,15 @@ void SlabPool::truncate_sequence(int64_t sequence_id, int64_t remove_len) {
   int64_t old_blocks_needed = (seq.seq_len + block_size - 1) / block_size;
   int64_t new_blocks_needed =
       (new_len > 0) ? (new_len + block_size - 1) / block_size : 0;
+  PROFILE_ADD_INFO(
+      "sequence_id=",
+      sequence_id,
+      ",old_seq_len=",
+      seq.seq_len,
+      ",new_seq_len=",
+      new_len,
+      ",released_blocks=",
+      old_blocks_needed - new_blocks_needed);
 
   if (new_blocks_needed < old_blocks_needed) {
     std::lock_guard<std::mutex> pool_lock(pool_mutex);
@@ -300,6 +343,7 @@ void SlabPool::cache_update(
     const at::Tensor& keys,
     const at::Tensor& values,
     const std::vector<int64_t>& token_counts) {
+  PROFILE_PACE_FUNCTION("slab_cache_update");
   const int64_t n_seq = static_cast<int64_t>(sequence_ids.size());
   const int64_t bsize = this->block_size;
 
@@ -330,6 +374,7 @@ void SlabPool::cache_update(
     };
     std::vector<DecodeInfo> dinfos(static_cast<size_t>(n_seq));
 
+    const auto prepare_start = std::chrono::high_resolution_clock::now();
     {
       std::lock_guard<std::mutex> lock(sequence_mutex);
       for (int64_t i = 0; i < n_seq; ++i) {
@@ -349,6 +394,7 @@ void SlabPool::cache_update(
         dinfos[i].pos_in_blk = seq.seq_len % bsize;
       }
     }
+    const auto prepare_end = std::chrono::high_resolution_clock::now();
 
     const at::BFloat16* key_ptr = keys.data_ptr<at::BFloat16>();
     const at::BFloat16* val_ptr = values.data_ptr<at::BFloat16>();
@@ -368,6 +414,21 @@ void SlabPool::cache_update(
     const int64_t total_bytes =
         total_work * hdim * int64_t(sizeof(at::BFloat16)) * 2;
 
+    PROFILE_ADD_INFO(
+        "path=decode,layout=",
+        this->block_major ? "block_major" : "head_major",
+        ",block_size=",
+        bsize,
+        ",sequences=",
+        n_seq,
+        ",num_kv_heads=",
+        n_kv_heads,
+        ",head_dim=",
+        hdim,
+        ",copy_bytes=",
+        total_bytes);
+
+    const auto copy_start = std::chrono::high_resolution_clock::now();
 #pragma omp parallel for schedule(static) if (total_bytes > 64 * 1024)
     for (int64_t wi = 0; wi < total_work; ++wi) {
       const int64_t i = wi / n_kv_heads;
@@ -386,12 +447,20 @@ void SlabPool::cache_update(
       dpbf16::copy_bf16_avx512(dst_k, src_k, hdim);
       dpbf16::copy_bf16_avx512(dst_v, src_v, hdim);
     }
+    const auto copy_end = std::chrono::high_resolution_clock::now();
 
     {
       std::lock_guard<std::mutex> lock(sequence_mutex);
       for (int64_t i = 0; i < n_seq; ++i)
         dinfos[i].seq->seq_len += 1;
     }
+    PROFILE_ADD_INFO(
+        ",prepare_ms=",
+        std::chrono::duration<double, std::milli>(prepare_end - prepare_start)
+            .count(),
+        ",copy_ms=",
+        std::chrono::duration<double, std::milli>(copy_end - copy_start)
+            .count());
     return;
   }
 
@@ -418,6 +487,7 @@ void SlabPool::cache_update(
   };
   std::vector<SeqInfo> infos(static_cast<size_t>(n_seq));
 
+  const auto prepare_start = std::chrono::high_resolution_clock::now();
   {
     std::lock_guard<std::mutex> lock(sequence_mutex);
     for (int64_t i = 0; i < n_seq; ++i) {
@@ -447,6 +517,7 @@ void SlabPool::cache_update(
       }
     }
   }
+  const auto prepare_end = std::chrono::high_resolution_clock::now();
 
   const at::BFloat16* key_ptr = keys.data_ptr<at::BFloat16>();
   const at::BFloat16* val_ptr = values.data_ptr<at::BFloat16>();
@@ -480,6 +551,23 @@ void SlabPool::cache_update(
   const int64_t prefill_bytes =
       total_tokens * n_kv_heads * hdim * int64_t(sizeof(at::BFloat16)) * 2;
 
+  PROFILE_ADD_INFO(
+      "path=multi_token,layout=",
+      this->block_major ? "block_major" : "head_major",
+      ",block_size=",
+      bsize,
+      ",sequences=",
+      n_seq,
+      ",tokens=",
+      total_tokens,
+      ",num_kv_heads=",
+      n_kv_heads,
+      ",head_dim=",
+      hdim,
+      ",copy_bytes=",
+      prefill_bytes);
+
+  const auto copy_start = std::chrono::high_resolution_clock::now();
 #pragma omp parallel for schedule(static) if (prefill_bytes > 64 * 1024)
   for (int64_t wi = 0; wi < n_seq * n_kv_heads; ++wi) {
     const int64_t i = wi / n_kv_heads;
@@ -512,12 +600,19 @@ void SlabPool::cache_update(
       dpbf16::copy_bf16_avx512(dst_v, v_seq_base + t * vsrc_seq_stride, hdim);
     }
   }
+  const auto copy_end = std::chrono::high_resolution_clock::now();
 
   {
     std::lock_guard<std::mutex> lock(sequence_mutex);
     for (int64_t i = 0; i < n_seq; ++i)
       infos[i].seq->seq_len += infos[i].new_tokens;
   }
+  PROFILE_ADD_INFO(
+      ",prepare_ms=",
+      std::chrono::duration<double, std::milli>(prepare_end - prepare_start)
+          .count(),
+      ",copy_ms=",
+      std::chrono::duration<double, std::milli>(copy_end - copy_start).count());
 }
 
 } // namespace kernels
