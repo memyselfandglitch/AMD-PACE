@@ -98,3 +98,43 @@ This is an FP32, single-threaded locality microbenchmark. It excludes softmax,
 masking, block tables, OpenMP scheduling, and PACE's BF16 kernels. Its purpose
 is to determine which loop/layout interactions deserve implementation and
 hardware-counter profiling in PACE, not to predict end-to-end inference speed.
+
+## Focused Long-Context P*V Claim
+
+`pv_loop_crossover.cpp` tests the strongest pattern from the initial BMM run
+without carrying all 24 candidates into a larger sweep. It fixes V to one
+head-major attention head and compares only:
+
+```text
+ikj: complete one query row while streaming through V
+kij: reuse each V[token, :] row across all query rows
+```
+
+The pre-registered claim is:
+
+- At `M=1`, the loops are equivalent and must be reported as a tie.
+- At long context (`M=16..128`, `N>=2048`), `kij` should win by reusing each
+  `V[token, :]` row across query rows.
+- Other cells are exploratory and locate where the locality advantage appears
+  or reverses. A universal order is rejected only if each order earns at least
+  two strict workload wins.
+
+Defaults cover `M=1..512`, `N=128..16384`, both head dimensions, and three
+independent random dense inputs. Each workload has `60` measured pairs: three
+data seeds times 20 repeats. Candidate order is randomized within every pair.
+
+A winner requires all of the following:
+
+- At least 5% paired median improvement.
+- At least 80% paired wins.
+- A 95% bootstrap confidence interval excluding 1.
+
+Run from the repository root:
+
+```bash
+sbatch benchmarks/cpu/attention_bmm/slurm_pv_loop_crossover.sbatch
+```
+
+Results are written to `benchmark_results/cpu-pv-crossover/<job_id>/`. The
+generated `pv_crossover_report.md` states how many pre-registered workloads
+matched the claim and lists every counterexample automatically.
