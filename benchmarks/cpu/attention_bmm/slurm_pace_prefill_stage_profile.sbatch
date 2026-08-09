@@ -39,10 +39,12 @@ BOOTSTRAP_SAMPLES="${PACE_STAGE_BOOTSTRAP_SAMPLES:-10000}"
 mkdir -p "${RESULT_DIR}" "${PACE_REPO}/pace/lib"
 cd "${PACE_REPO}"
 source "${PACE_VENV}/bin/activate"
+export PYTHONPATH="${PACE_REPO}${PYTHONPATH:+:${PYTHONPATH}}"
+export PYTHONNOUSERSITE=1
 
 # Stage hooks are native C++ code, so every profiling run rebuilds the library.
 "${PYTHON}" setup.py build_clib
-BUILT_LIB="build/Release/pace/lib/libpace_cpp.so"
+BUILT_LIB="build/csrc/libpace_cpp.so"
 TARGET_LIB="pace/lib/libpace_cpp.so"
 if [[ ! -f "${BUILT_LIB}" ]]; then
     echo "PACE build did not produce ${BUILT_LIB}" >&2
@@ -51,6 +53,29 @@ fi
 if [[ ! -f "${TARGET_LIB}" ]] || [[ ! "${BUILT_LIB}" -ef "${TARGET_LIB}" ]]; then
     cp "${BUILT_LIB}" "${TARGET_LIB}"
 fi
+
+# Fail before the expensive sweep if Python resolves an old PACE installation.
+"${PYTHON}" - <<'PY'
+from pathlib import Path
+
+import pace
+import torch
+
+repo = Path.cwd().resolve()
+module_path = Path(pace.__file__).resolve()
+library_path = Path(pace._LIB_PATH).resolve()
+if repo not in module_path.parents:
+    raise RuntimeError(f"loaded PACE outside repository: {module_path}")
+if repo not in library_path.parents:
+    raise RuntimeError(f"loaded PACE library outside repository: {library_path}")
+
+pool = torch.classes.pace.SlabPool(1, 1, 64, 64)
+pool.set_stage_profile(False)
+if list(pool.get_stage_profile()):
+    raise RuntimeError("new SlabPool unexpectedly returned a stale profile")
+print(f"PACE module preflight OK: {module_path}")
+print(f"PACE library preflight OK: {library_path}")
+PY
 
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-96}"
 export OMP_PLACES=cores
@@ -67,6 +92,9 @@ export PACE_LOG_LEVEL=none
     echo "git_commit=$(git rev-parse HEAD)"
     echo "python=$(${PYTHON} --version)"
     echo "torch=$(${PYTHON} -c 'import torch; print(torch.__version__)')"
+    echo "pace_module=$(${PYTHON} -c 'import pace; print(pace.__file__)')"
+    echo "pace_library=$(${PYTHON} -c 'import pace; print(pace._LIB_PATH)')"
+    echo "pace_library_sha256=$(sha256sum "${TARGET_LIB}" | cut -d' ' -f1)"
     echo "omp_num_threads=${OMP_NUM_THREADS}"
     echo "omp_places=${OMP_PLACES}"
     echo "omp_proc_bind=${OMP_PROC_BIND}"
