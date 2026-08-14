@@ -300,3 +300,44 @@ sbatch benchmarks/cpu/attention_bmm/slurm_pv_brgemm_dataflow.sbatch
 Results are written under `benchmark_results/pv-brgemm-dataflow/<job_id>/` as
 the raw paired trials, workload summary, automatic Markdown report, and exact
 environment metadata.
+
+## QK Transpose Full-K Versus IKJ/KIJ
+
+`qk_brgemm_dataflow.cpp` applies the same controlled method to QK transpose.
+Unlike P*V, a faithful tiled translation of scalar `IKJ` and `KIJ` must expose
+the reduction dimension as multiple chunks:
+
+```text
+PACE baseline: query tile -> KV tile, one full-head-dimension BRGeMM
+IKJ:           query tile -> K chunk -> KV tile
+KIJ:           K chunk -> query tile -> KV tile
+```
+
+The default K chunk is `32`; query and KV output tiles remain `64x64`. The PACE
+baseline is essential because split-K execution introduces more BRGeMM calls.
+An ordering is useful only if its locality benefit exceeds that overhead and
+improves the implementation PACE uses today. Q and K generation plus K packing
+are identical and outside the timed region.
+
+Run the build and correctness smoke test:
+
+```bash
+PACE_QK_QUERY_LENS=64,128 \
+PACE_QK_KV_LENS=2048 \
+PACE_QK_HEAD_DIMS=64 \
+PACE_QK_DATA_SEEDS=11 \
+PACE_QK_WARMUPS=1 \
+PACE_QK_REPEATS=3 \
+  sbatch --export=ALL \
+  benchmarks/cpu/attention_bmm/slurm_qk_brgemm_dataflow.sbatch
+```
+
+Then run the default 24-workload experiment:
+
+```bash
+sbatch benchmarks/cpu/attention_bmm/slurm_qk_brgemm_dataflow.sbatch
+```
+
+Results are written under `benchmark_results/qk-brgemm-dataflow/<job_id>/`.
+The generated report retains the current PACE baseline unless IKJ or KIJ earns
+a strict improvement in at least two workloads.
