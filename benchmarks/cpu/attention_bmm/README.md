@@ -252,3 +252,51 @@ This first gate intentionally profiles the attention call only. Slab allocation
 and `cache_update` happen once during workload setup and remain outside the
 paired timing region. Allocation/copy timing is a separate follow-up because it
 answers a different question from repeated K/V packing inside prefill.
+
+## Tiled BF16 IKJ Versus KIJ
+
+`pv_brgemm_dataflow.cpp` translates the two strongest scalar P*V loop orders
+into macro-tiled dataflows while retaining PACE's oneDNN BF16 BRGeMM ukernel:
+
+```text
+IKJ: query tile -> KV block -> output-dimension tile
+KIJ: KV block -> query tile -> output-dimension tile
+```
+
+Both candidates consume identical pre-tiled probability and V buffers. Operand
+conversion and V packing happen before timing, so the comparison isolates the
+cache effect of traversal order rather than measuring different preprocessing.
+The initial gate is single-head and single-threaded by design; physical
+head-major/block-major layout, GQA batching, online softmax, and OpenMP are held
+out until KIJ demonstrates at least two strict wins.
+
+The default matrix covers query lengths `64,128,256,512`, KV lengths
+`2048,8192,16384`, head dimensions `64,128`, and three random inputs. Here the
+P*V dimensions are `M=query length`, `K=KV length`, and `N=head dimension`;
+head dimension alone is not treated as a complete SLM/LLM model shape. Each
+workload receives two warmups and 20 paired measurements in randomized order.
+A strict winner needs a 5% paired median effect, 80% pair wins, a bootstrap 95%
+confidence interval excluding one, and non-regressing p95.
+
+Run a small build/correctness smoke test:
+
+```bash
+PACE_FLOW_QUERY_LENS=64,128 \
+PACE_FLOW_KV_LENS=2048 \
+PACE_FLOW_HEAD_DIMS=64 \
+PACE_FLOW_DATA_SEEDS=11 \
+PACE_FLOW_WARMUPS=1 \
+PACE_FLOW_REPEATS=3 \
+  sbatch --export=ALL \
+  benchmarks/cpu/attention_bmm/slurm_pv_brgemm_dataflow.sbatch
+```
+
+Then submit the default experiment:
+
+```bash
+sbatch benchmarks/cpu/attention_bmm/slurm_pv_brgemm_dataflow.sbatch
+```
+
+Results are written under `benchmark_results/pv-brgemm-dataflow/<job_id>/` as
+the raw paired trials, workload summary, automatic Markdown report, and exact
+environment metadata.

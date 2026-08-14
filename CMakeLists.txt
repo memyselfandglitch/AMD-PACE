@@ -24,3 +24,8 @@ include(cmake/BuildAOCLDLP.cmake)
 
 set(CMAKE_INSTALL_RPATH $ORIGIN)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/csrc)
+
+option(PACE_BUILD_BENCHMARKS "Build standalone PACE research benchmarks" OFF)
+if(PACE_BUILD_BENCHMARKS)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/cpu/attention_bmm)
+endif()
