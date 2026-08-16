@@ -108,6 +108,7 @@ def analyze(args: argparse.Namespace) -> list[dict[str, object]]:
         raise RuntimeError("at least one trial failed correctness")
 
     workload_fields = (
+        "shape_family",
         "shape",
         "num_q_heads",
         "num_kv_heads",
@@ -118,11 +119,24 @@ def analyze(args: argparse.Namespace) -> list[dict[str, object]]:
     )
     groups: dict[tuple[str, ...], list[dict[str, str]]] = defaultdict(list)
     for row in trials:
-        groups[tuple(row[field] for field in workload_fields)].append(row)
+        groups[
+            tuple(
+                row.get(field, "default") if field == "shape_family" else row[field]
+                for field in workload_fields
+            )
+        ].append(row)
 
     summaries: list[dict[str, object]] = []
     expected = set(CANDIDATES)
-    for group_index, (key, rows) in enumerate(sorted(groups.items())):
+    ordered_groups = sorted(
+        groups.items(),
+        key=lambda item: (
+            item[0][0],
+            item[0][1],
+            *(int(value) for value in item[0][2:]),
+        ),
+    )
+    for group_index, (key, rows) in enumerate(ordered_groups):
         by_candidate: dict[str, list[float]] = defaultdict(list)
         paired: dict[tuple[str, str], dict[str, float]] = defaultdict(dict)
         for row in rows:
@@ -167,6 +181,7 @@ def analyze(args: argparse.Namespace) -> list[dict[str, object]]:
             recommendation = min(strict_candidates, key=medians.get)
 
         row: dict[str, object] = dict(zip(workload_fields, key))
+        row["gqa_ratio"] = int(row["num_q_heads"]) // int(row["num_kv_heads"])
         row["paired_quadruples"] = len(pair_rows)
         for name in CANDIDATES:
             row[f"{name}_median_ms"] = medians[name]
@@ -206,6 +221,18 @@ def write_report(
     for row in rows:
         recommendations[str(row["recommendation"])] += 1
 
+    family_shapes: dict[tuple[str, str], list[dict[str, object]]] = defaultdict(list)
+    family_regions: dict[tuple[str, str, str], list[dict[str, object]]] = defaultdict(list)
+    for row in rows:
+        family_shapes[(str(row["shape_family"]), str(row["shape"]))].append(row)
+        family_regions[
+            (
+                str(row["shape_family"]),
+                str(row["seq_len"]),
+                str(row["batch_size"]),
+            )
+        ].append(row)
+
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w") as stream:
         stream.write("# Decode KV Layout and Traversal Summary\n\n")
@@ -241,17 +268,115 @@ def write_report(
             stream.write(
                 f"- Recommended `{candidate}`: `{recommendations[candidate]}` workloads\n"
             )
-        stream.write("\n## Workloads\n\n")
+        stream.write("\n## Controlled Shape Families\n\n")
         stream.write(
-            "| shape | batch | seq | current ms | layout-only | traversal-only | "
+            "| family | shape | Q/KV | D | GQA ratio | workloads | "
+            "median co-design speedup | strict wins |\n"
+        )
+        stream.write(
+            "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |\n"
+        )
+        for (family, shape), group in sorted(family_shapes.items()):
+            speedups = [
+                float(row["co_designed_vs_current_speedup"]) for row in group
+            ]
+            wins = sum(
+                row["co_designed_vs_current_decision"]
+                == "block_major_block_first"
+                for row in group
+            )
+            first = group[0]
+            stream.write(
+                f"| {family} | {shape} | {first['num_q_heads']}/{first['num_kv_heads']} | "
+                f"{first['head_dim']} | {first['gqa_ratio']} | {len(group)} | "
+                f"{statistics.median(speedups):.3f}x | {wins}/{len(group)} |\n"
+            )
+
+        stream.write("\n## Sequence And Batch Regions\n\n")
+        stream.write(
+            "| family | sequence | batch | shapes | median co-design speedup | "
+            "strict wins |\n"
+        )
+        stream.write("| --- | ---: | ---: | ---: | ---: | ---: |\n")
+        for (family, sequence, batch), group in sorted(
+            family_regions.items(),
+            key=lambda item: (item[0][0], int(item[0][1]), int(item[0][2])),
+        ):
+            speedups = [
+                float(row["co_designed_vs_current_speedup"]) for row in group
+            ]
+            wins = sum(
+                row["co_designed_vs_current_decision"]
+                == "block_major_block_first"
+                for row in group
+            )
+            stream.write(
+                f"| {family} | {sequence} | {batch} | {len(group)} | "
+                f"{statistics.median(speedups):.3f}x | {wins}/{len(group)} |\n"
+            )
+
+        stream.write("\n## Co-design Win/Loss Maps\n\n")
+        stream.write(
+            "Cells show current-baseline latency divided by block-major/block-first "
+            "latency. `+` is a strict co-design win, `-` is a strict current-baseline "
+            "win, and `~` is a tie under the preregistered criterion.\n\n"
+        )
+        families = sorted({str(row["shape_family"]) for row in rows})
+        for family in families:
+            family_rows = [row for row in rows if row["shape_family"] == family]
+            for block_size in sorted({int(row["block_size"]) for row in family_rows}):
+                block_rows = [
+                    row
+                    for row in family_rows
+                    if int(row["block_size"]) == block_size
+                ]
+                columns = sorted(
+                    {
+                        (int(row["seq_len"]), int(row["batch_size"]))
+                        for row in block_rows
+                    }
+                )
+                stream.write(f"### {family}, block size {block_size}\n\n")
+                stream.write("| shape | " + " | ".join(
+                    f"S{sequence}/B{batch}" for sequence, batch in columns
+                ) + " |\n")
+                stream.write("| --- | " + " | ".join("---:" for _ in columns) + " |\n")
+                by_cell = {
+                    (
+                        str(row["shape"]),
+                        int(row["seq_len"]),
+                        int(row["batch_size"]),
+                    ): row
+                    for row in block_rows
+                }
+                for shape in sorted({str(row["shape"]) for row in block_rows}):
+                    cells = []
+                    for sequence, batch in columns:
+                        row = by_cell[(shape, sequence, batch)]
+                        decision = row["co_designed_vs_current_decision"]
+                        marker = "~"
+                        if decision == "block_major_block_first":
+                            marker = "+"
+                        elif decision == "head_major_head_first":
+                            marker = "-"
+                        cells.append(
+                            f"{float(row['co_designed_vs_current_speedup']):.3f}x {marker}"
+                        )
+                    stream.write(f"| {shape} | " + " | ".join(cells) + " |\n")
+                stream.write("\n")
+
+        stream.write("\n## Individual Workloads\n\n")
+        stream.write(
+            "| family | shape | batch | seq | block | current ms | layout-only | traversal-only | "
             "co-designed | recommendation |\n"
         )
         stream.write(
-            "| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |\n"
+            "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |\n"
         )
         for row in rows:
             stream.write(
-                f"| {row['shape']} | {row['batch_size']} | {row['seq_len']} | "
+                f"| {row['shape_family']} | {row['shape']} | {row['batch_size']} | "
+                f"{row['seq_len']} | {row['block_size']} | "
                 f"{float(row['head_major_head_first_median_ms']):.4f} | "
                 f"{float(row['layout_only_head_first_speedup']):.3f}x "
                 f"[{row['layout_only_head_first_decision']}] | "

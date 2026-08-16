@@ -361,3 +361,18 @@ Run on the CPU node from the repository root:
 ```bash
 sbatch benchmarks/cpu/attention_bmm/slurm_decode_layout_traversal.sbatch
 ```
+
+Run the controlled crossover study, which independently varies KV-head count,
+GQA ratio, and head dimension:
+
+```bash
+PACE_DECODE_PROFILE=crossover \
+  sbatch --export=ALL \
+  benchmarks/cpu/attention_bmm/slurm_decode_layout_traversal.sbatch
+```
+
+Custom shapes use
+`family/name:num_q_heads:num_kv_heads:head_dim`. Multiple block sizes may be
+specified with `PACE_DECODE_BLOCK_SIZES=16,32,64,128,256`; the crossover
+profile intentionally fixes block size at 64 until a shape/length boundary is
+identified.
