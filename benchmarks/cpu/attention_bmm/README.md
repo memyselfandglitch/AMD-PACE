@@ -341,3 +341,23 @@ sbatch benchmarks/cpu/attention_bmm/slurm_qk_brgemm_dataflow.sbatch
 Results are written under `benchmark_results/qk-brgemm-dataflow/<job_id>/`.
 The generated report retains the current PACE baseline unless IKJ or KIJ earns
 a strict improvement in at least two workloads.
+# Decode KV layout versus traversal
+
+`pace_decode_layout_traversal` isolates the interaction between physical KV
+storage and fused decode traversal. It compares:
+
+- head-major storage with head-first traversal (current design),
+- block-major storage with head-first traversal (layout-only control),
+- head-major storage with block-first traversal (traversal-only control), and
+- block-major storage with block-first traversal (co-designed candidate).
+
+The benchmark uses BF16 K/V and queries, AVX-512 BF16 dot products, PACE's
+blockwise online-softmax structure, GQA sharing, randomized paired repeats, and
+correctness checks. It is deliberately single-threaded; a production SlabPool
+prototype and OpenMP study come only after a repeatable co-design signal.
+
+Run on the CPU node from the repository root:
+
+```bash
+sbatch benchmarks/cpu/attention_bmm/slurm_decode_layout_traversal.sbatch
+```

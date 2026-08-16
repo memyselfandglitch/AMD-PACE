@@ -1,0 +1,561 @@
+/******************************************************************************
+ * Copyright (c) 2026 Advanced Micro Devices, Inc.
+ * All rights reserved.
+ * Portions of this file consist of AI-generated content
+ *
+ * Isolate physical KV layout from decode traversal order using PACE's fused
+ * blockwise online-softmax dataflow and AVX-512 BF16 primitives.
+ ******************************************************************************/
+
+#include <ops/exp_approx.h>
+
+#include <algorithm>
+#include <array>
+#include <chrono>
+#include <cmath>
+#include <cstdint>
+#include <cstring>
+#include <fstream>
+#include <iomanip>
+#include <iostream>
+#include <limits>
+#include <random>
+#include <stdexcept>
+#include <string>
+#include <utility>
+#include <vector>
+
+namespace {
+
+using Clock = std::chrono::steady_clock;
+using BFloat16 = uint16_t;
+
+constexpr int64_t kMaxBlockSize = 256;
+
+enum class Layout { HeadMajor, BlockMajor };
+enum class Traversal { HeadFirst, BlockFirst };
+
+struct Candidate {
+  const char* name;
+  Layout layout;
+  Traversal traversal;
+};
+
+constexpr std::array<Candidate, 4> kCandidates{{
+    {"head_major_head_first", Layout::HeadMajor, Traversal::HeadFirst},
+    {"block_major_head_first", Layout::BlockMajor, Traversal::HeadFirst},
+    {"head_major_block_first", Layout::HeadMajor, Traversal::BlockFirst},
+    {"block_major_block_first", Layout::BlockMajor, Traversal::BlockFirst},
+}};
+
+struct Shape {
+  std::string name;
+  int64_t num_q_heads;
+  int64_t num_kv_heads;
+  int64_t head_dim;
+};
+
+const std::array<Shape, 3> kShapes{{
+    {"slm_gqa", 8, 4, 64},
+    {"llama_gqa", 32, 8, 128},
+    {"mha", 8, 8, 64},
+}};
+
+struct Options {
+  std::vector<std::string> shapes{"slm_gqa", "llama_gqa", "mha"};
+  std::vector<int64_t> sequence_lengths{512, 2048, 8192, 16384};
+  std::vector<int64_t> batch_sizes{1, 4};
+  std::vector<uint64_t> data_seeds{11, 29, 47};
+  int64_t block_size = 64;
+  int warmups = 2;
+  int repeats = 20;
+  uint64_t order_seed = 20260816;
+  std::string out = "decode_layout_traversal_trials.csv";
+};
+
+std::vector<std::string> split(const std::string& text) {
+  std::vector<std::string> values;
+  size_t begin = 0;
+  while (begin < text.size()) {
+    const size_t end = text.find(',', begin);
+    values.push_back(text.substr(begin, end - begin));
+    if (end == std::string::npos)
+      break;
+    begin = end + 1;
+  }
+  return values;
+}
+
+std::vector<int64_t> integer_list(const std::string& text) {
+  std::vector<int64_t> values;
+  for (const auto& token : split(text)) {
+    const int64_t value = std::stoll(token);
+    if (value <= 0)
+      throw std::invalid_argument("integer lists require positive values");
+    values.push_back(value);
+  }
+  return values;
+}
+
+std::vector<uint64_t> seed_list(const std::string& text) {
+  std::vector<uint64_t> values;
+  for (const auto& token : split(text))
+    values.push_back(std::stoull(token));
+  return values;
+}
+
+Options options(int argc, char** argv) {
+  Options result;
+  for (int index = 1; index < argc; ++index) {
+    const std::string name = argv[index];
+    if (index + 1 >= argc)
+      throw std::invalid_argument("missing value for " + name);
+    const std::string value = argv[++index];
+    if (name == "--shapes")
+      result.shapes = split(value);
+    else if (name == "--seq-lens")
+      result.sequence_lengths = integer_list(value);
+    else if (name == "--batch-sizes")
+      result.batch_sizes = integer_list(value);
+    else if (name == "--data-seeds")
+      result.data_seeds = seed_list(value);
+    else if (name == "--block-size")
+      result.block_size = std::stoll(value);
+    else if (name == "--warmups")
+      result.warmups = std::stoi(value);
+    else if (name == "--repeats")
+      result.repeats = std::stoi(value);
+    else if (name == "--order-seed")
+      result.order_seed = std::stoull(value);
+    else if (name == "--out")
+      result.out = value;
+    else
+      throw std::invalid_argument("unknown option: " + name);
+  }
+  if (result.shapes.empty() || result.sequence_lengths.empty() ||
+      result.batch_sizes.empty() || result.data_seeds.empty() ||
+      result.block_size <= 0 || result.block_size > kMaxBlockSize ||
+      result.block_size % 16 != 0 || result.warmups < 0 || result.repeats <= 0)
+    throw std::invalid_argument("invalid empty list, block size, or repeat count");
+  return result;
+}
+
+const Shape& find_shape(const std::string& name) {
+  const auto it = std::find_if(
+      kShapes.begin(), kShapes.end(), [&](const Shape& shape) {
+        return shape.name == name;
+      });
+  if (it == kShapes.end())
+    throw std::invalid_argument("unknown shape: " + name);
+  return *it;
+}
+
+BFloat16 to_bfloat16(float value) {
+  uint32_t bits;
+  std::memcpy(&bits, &value, sizeof(bits));
+  const uint32_t rounding = 0x7fffU + ((bits >> 16U) & 1U);
+  return static_cast<BFloat16>((bits + rounding) >> 16U);
+}
+
+float from_bfloat16(BFloat16 value) {
+  const uint32_t bits = static_cast<uint32_t>(value) << 16U;
+  float result;
+  std::memcpy(&result, &bits, sizeof(result));
+  return result;
+}
+
+inline __m512 bf16_to_fp32(__m256i value) {
+  return _mm512_cvtpbh_ps(reinterpret_cast<__m256bh>(value));
+}
+
+inline float dot_product(const BFloat16* a, const BFloat16* b, int64_t n) {
+  __m512 acc = _mm512_setzero_ps();
+  int64_t index = 0;
+  for (; index + 32 <= n; index += 32) {
+    const __m512bh av =
+        (__m512bh)_mm512_loadu_si512(reinterpret_cast<const void*>(a + index));
+    const __m512bh bv =
+        (__m512bh)_mm512_loadu_si512(reinterpret_cast<const void*>(b + index));
+    acc = _mm512_dpbf16_ps(acc, av, bv);
+  }
+  if (index + 16 <= n) {
+    const __m512 af = bf16_to_fp32(
+        _mm256_loadu_si256(reinterpret_cast<const __m256i*>(a + index)));
+    const __m512 bf = bf16_to_fp32(
+        _mm256_loadu_si256(reinterpret_cast<const __m256i*>(b + index)));
+    acc = _mm512_fmadd_ps(af, bf, acc);
+    index += 16;
+  }
+  float result = _mm512_reduce_add_ps(acc);
+  for (; index < n; ++index)
+    result += from_bfloat16(a[index]) * from_bfloat16(b[index]);
+  return result;
+}
+
+template <int Chunks>
+inline void accumulate_weighted(
+    float* output,
+    const BFloat16* values,
+    const float* weights,
+    int64_t tokens,
+    int64_t head_dim) {
+  __m512 accumulators[Chunks];
+  for (int chunk = 0; chunk < Chunks; ++chunk)
+    accumulators[chunk] = _mm512_loadu_ps(output + chunk * 16);
+  for (int64_t token = 0; token < tokens; ++token) {
+    const __m512 weight = _mm512_set1_ps(weights[token]);
+    const BFloat16* row = values + token * head_dim;
+    for (int chunk = 0; chunk < Chunks; ++chunk) {
+      const __m512 value = bf16_to_fp32(_mm256_loadu_si256(
+          reinterpret_cast<const __m256i*>(row + chunk * 16)));
+      accumulators[chunk] =
+          _mm512_fmadd_ps(weight, value, accumulators[chunk]);
+    }
+  }
+  for (int chunk = 0; chunk < Chunks; ++chunk)
+    _mm512_storeu_ps(output + chunk * 16, accumulators[chunk]);
+}
+
+void accumulate_weighted(
+    float* output,
+    const BFloat16* values,
+    const float* weights,
+    int64_t tokens,
+    int64_t head_dim) {
+  if (head_dim == 64)
+    accumulate_weighted<4>(output, values, weights, tokens, head_dim);
+  else if (head_dim == 128)
+    accumulate_weighted<8>(output, values, weights, tokens, head_dim);
+  else
+    throw std::invalid_argument("benchmark supports head dimensions 64 and 128");
+}
+
+struct Workload {
+  Shape shape;
+  int64_t batch_size;
+  int64_t sequence_length;
+  int64_t block_size;
+  int64_t blocks_per_sequence;
+  int64_t total_blocks;
+  int64_t repetitions;
+  float scale;
+  std::vector<BFloat16> queries;
+  std::vector<BFloat16> head_major_pool;
+  std::vector<BFloat16> block_major_pool;
+
+  Workload(
+      const Shape& shape,
+      int64_t batch_size,
+      int64_t sequence_length,
+      int64_t block_size,
+      uint64_t seed)
+      : shape(shape),
+        batch_size(batch_size),
+        sequence_length(sequence_length),
+        block_size(block_size),
+        blocks_per_sequence((sequence_length + block_size - 1) / block_size),
+        total_blocks(batch_size * blocks_per_sequence),
+        repetitions(shape.num_q_heads / shape.num_kv_heads),
+        scale(1.0f / std::sqrt(static_cast<float>(shape.head_dim))),
+        queries(static_cast<size_t>(batch_size * shape.num_q_heads * shape.head_dim)),
+        head_major_pool(static_cast<size_t>(
+            shape.num_kv_heads * total_blocks * 2 * block_size * shape.head_dim)),
+        block_major_pool(head_major_pool.size()) {
+    if (shape.num_q_heads % shape.num_kv_heads != 0)
+      throw std::invalid_argument("query heads must be divisible by KV heads");
+    std::mt19937_64 random(seed);
+    std::uniform_real_distribution<float> distribution(-0.25f, 0.25f);
+    for (auto& value : queries)
+      value = to_bfloat16(distribution(random));
+    for (int64_t block = 0; block < total_blocks; ++block) {
+      for (int64_t head = 0; head < shape.num_kv_heads; ++head) {
+        for (int64_t kv = 0; kv < 2; ++kv) {
+          for (int64_t token = 0; token < block_size; ++token) {
+            for (int64_t dim = 0; dim < shape.head_dim; ++dim) {
+              const BFloat16 value = to_bfloat16(distribution(random));
+              head_major_pool[offset(
+                  Layout::HeadMajor, block, head, kv, token, dim)] = value;
+              block_major_pool[offset(
+                  Layout::BlockMajor, block, head, kv, token, dim)] = value;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  size_t offset(
+      Layout layout,
+      int64_t block,
+      int64_t head,
+      int64_t kv,
+      int64_t token,
+      int64_t dim) const {
+    int64_t outer;
+    if (layout == Layout::HeadMajor)
+      outer = head * total_blocks + block;
+    else
+      outer = block * shape.num_kv_heads + head;
+    return static_cast<size_t>(
+        ((((outer * 2) + kv) * block_size + token) * shape.head_dim) + dim);
+  }
+
+  const BFloat16* query(int64_t batch, int64_t q_head) const {
+    return queries.data() +
+        (batch * shape.num_q_heads + q_head) * shape.head_dim;
+  }
+
+  const BFloat16* block(
+      Layout layout, int64_t physical_block, int64_t kv_head, int64_t kv) const {
+    const auto& pool = layout == Layout::HeadMajor ? head_major_pool
+                                                   : block_major_pool;
+    return pool.data() + offset(layout, physical_block, kv_head, kv, 0, 0);
+  }
+};
+
+struct State {
+  std::vector<float> maximum;
+  std::vector<float> sum;
+  std::vector<float> output;
+
+  explicit State(const Workload& workload)
+      : maximum(static_cast<size_t>(workload.batch_size * workload.shape.num_q_heads)),
+        sum(maximum.size()),
+        output(maximum.size() * static_cast<size_t>(workload.shape.head_dim)) {}
+
+  void reset() {
+    std::fill(maximum.begin(), maximum.end(), -std::numeric_limits<float>::infinity());
+    std::fill(sum.begin(), sum.end(), 0.0f);
+    std::fill(output.begin(), output.end(), 0.0f);
+  }
+};
+
+void process_query_head_block(
+    const Workload& workload,
+    int64_t batch,
+    int64_t q_head,
+    const BFloat16* keys,
+    const BFloat16* values,
+    int64_t tokens,
+    State& state) {
+  const size_t state_index =
+      static_cast<size_t>(batch * workload.shape.num_q_heads + q_head);
+  float& running_max = state.maximum[state_index];
+  float& running_sum = state.sum[state_index];
+  float* output =
+      state.output.data() + state_index * workload.shape.head_dim;
+  const BFloat16* query = workload.query(batch, q_head);
+
+  alignas(64) float scores[kMaxBlockSize];
+  alignas(64) float weights[kMaxBlockSize];
+  float block_max = -std::numeric_limits<float>::infinity();
+  for (int64_t token = 0; token < tokens; ++token) {
+    const float score = dot_product(
+                            query,
+                            keys + token * workload.shape.head_dim,
+                            workload.shape.head_dim) *
+        workload.scale;
+    scores[token] = score;
+    block_max = std::max(block_max, score);
+  }
+
+  const float new_max = std::max(running_max, block_max);
+  if (new_max > running_max) {
+    float correction;
+    EXP_APPROX_SCALAR(running_max - new_max, correction);
+    running_sum *= correction;
+    const __m512 factor = _mm512_set1_ps(correction);
+    for (int64_t dim = 0; dim < workload.shape.head_dim; dim += 16) {
+      const __m512 value = _mm512_loadu_ps(output + dim);
+      _mm512_storeu_ps(output + dim, _mm512_mul_ps(value, factor));
+    }
+  }
+
+  int64_t token = 0;
+  __m512 vector_sum = _mm512_setzero_ps();
+  const __m512 negative_max = _mm512_set1_ps(-new_max);
+  {
+    EXP_APPROX_AVX512_CONSTANTS();
+    for (; token + 16 <= tokens; token += 16) {
+      const __m512 score = _mm512_loadu_ps(scores + token);
+      __m512 weight;
+      EXP_APPROX_AVX512(_mm512_add_ps(score, negative_max), weight);
+      _mm512_storeu_ps(weights + token, weight);
+      vector_sum = _mm512_add_ps(vector_sum, weight);
+    }
+  }
+  float local_sum = _mm512_reduce_add_ps(vector_sum);
+  for (; token < tokens; ++token) {
+    EXP_APPROX_SCALAR(scores[token] - new_max, weights[token]);
+    local_sum += weights[token];
+  }
+  running_sum += local_sum;
+  accumulate_weighted(
+      output, values, weights, tokens, workload.shape.head_dim);
+  running_max = new_max;
+}
+
+void process_group_block(
+    const Workload& workload,
+    Layout layout,
+    int64_t batch,
+    int64_t logical_block,
+    int64_t kv_head,
+    State& state) {
+  const int64_t physical_block =
+      batch * workload.blocks_per_sequence + logical_block;
+  const int64_t tokens =
+      logical_block + 1 == workload.blocks_per_sequence
+      ? workload.sequence_length - logical_block * workload.block_size
+      : workload.block_size;
+  const BFloat16* keys = workload.block(layout, physical_block, kv_head, 0);
+  const BFloat16* values = workload.block(layout, physical_block, kv_head, 1);
+  const int64_t first_q_head = kv_head * workload.repetitions;
+  for (int64_t rep = 0; rep < workload.repetitions; ++rep)
+    process_query_head_block(
+        workload,
+        batch,
+        first_q_head + rep,
+        keys,
+        values,
+        tokens,
+        state);
+}
+
+void run(const Workload& workload, const Candidate& candidate, State& state) {
+  state.reset();
+  for (int64_t batch = 0; batch < workload.batch_size; ++batch) {
+    if (candidate.traversal == Traversal::HeadFirst) {
+      for (int64_t kv_head = 0; kv_head < workload.shape.num_kv_heads; ++kv_head)
+        for (int64_t block = 0; block < workload.blocks_per_sequence; ++block)
+          process_group_block(
+              workload, candidate.layout, batch, block, kv_head, state);
+    } else {
+      for (int64_t block = 0; block < workload.blocks_per_sequence; ++block)
+        for (int64_t kv_head = 0; kv_head < workload.shape.num_kv_heads; ++kv_head)
+          process_group_block(
+              workload, candidate.layout, batch, block, kv_head, state);
+    }
+  }
+  for (size_t index = 0; index < state.maximum.size(); ++index) {
+    const float inverse = state.sum[index] > 0.0f ? 1.0f / state.sum[index] : 0.0f;
+    float* output =
+        state.output.data() + index * workload.shape.head_dim;
+    const __m512 factor = _mm512_set1_ps(inverse);
+    for (int64_t dim = 0; dim < workload.shape.head_dim; dim += 16) {
+      const __m512 value = _mm512_loadu_ps(output + dim);
+      _mm512_storeu_ps(output + dim, _mm512_mul_ps(value, factor));
+    }
+  }
+}
+
+double checksum(const State& state) {
+  double result = 0.0;
+  for (size_t index = 0; index < state.output.size(); ++index)
+    result += static_cast<double>(state.output[index]) *
+        static_cast<double>((index % 17) + 1);
+  return result;
+}
+
+std::pair<double, double> error(
+    const std::vector<float>& reference, const std::vector<float>& candidate) {
+  double maximum_absolute = 0.0;
+  double maximum_relative = 0.0;
+  for (size_t index = 0; index < reference.size(); ++index) {
+    const double absolute = std::abs(
+        static_cast<double>(reference[index]) - candidate[index]);
+    const double denominator =
+        std::max(1e-6, std::abs(static_cast<double>(reference[index])));
+    maximum_absolute = std::max(maximum_absolute, absolute);
+    maximum_relative = std::max(maximum_relative, absolute / denominator);
+  }
+  return {maximum_absolute, maximum_relative};
+}
+
+void write_header(std::ofstream& stream) {
+  stream << "shape,num_q_heads,num_kv_heads,head_dim,batch_size,seq_len,"
+            "block_size,data_seed,round,order_position,candidate,layout,"
+            "traversal,elapsed_ms,checksum,max_abs_error,max_rel_error,correct\n";
+}
+
+void benchmark(const Options& opts) {
+  std::ofstream stream(opts.out);
+  if (!stream)
+    throw std::runtime_error("could not open output: " + opts.out);
+  write_header(stream);
+  stream << std::setprecision(12);
+  std::mt19937_64 order_random(opts.order_seed);
+  size_t rows = 0;
+
+  for (const auto& shape_name : opts.shapes) {
+    const Shape& shape = find_shape(shape_name);
+    for (const int64_t batch_size : opts.batch_sizes) {
+      for (const int64_t sequence_length : opts.sequence_lengths) {
+        for (const uint64_t data_seed : opts.data_seeds) {
+          Workload workload(
+              shape, batch_size, sequence_length, opts.block_size, data_seed);
+          std::array<State, 4> states{{
+              State(workload), State(workload), State(workload), State(workload)}};
+
+          run(workload, kCandidates[0], states[0]);
+          const auto reference = states[0].output;
+          std::array<std::pair<double, double>, 4> errors{};
+          for (size_t index = 0; index < kCandidates.size(); ++index) {
+            run(workload, kCandidates[index], states[index]);
+            errors[index] = error(reference, states[index].output);
+            if (errors[index].first > 1e-4 || errors[index].second > 1e-3)
+              throw std::runtime_error(
+                  std::string("correctness failed for ") + kCandidates[index].name);
+          }
+
+          for (int warmup = 0; warmup < opts.warmups; ++warmup) {
+            std::array<size_t, 4> order{{0, 1, 2, 3}};
+            std::shuffle(order.begin(), order.end(), order_random);
+            for (const size_t index : order)
+              run(workload, kCandidates[index], states[index]);
+          }
+
+          for (int round = 0; round < opts.repeats; ++round) {
+            std::array<size_t, 4> order{{0, 1, 2, 3}};
+            std::shuffle(order.begin(), order.end(), order_random);
+            for (size_t position = 0; position < order.size(); ++position) {
+              const size_t index = order[position];
+              const auto start = Clock::now();
+              run(workload, kCandidates[index], states[index]);
+              const auto stop = Clock::now();
+              const double elapsed_ms =
+                  std::chrono::duration<double, std::milli>(stop - start).count();
+              const Candidate& candidate = kCandidates[index];
+              stream << shape.name << ',' << shape.num_q_heads << ','
+                     << shape.num_kv_heads << ',' << shape.head_dim << ','
+                     << batch_size << ',' << sequence_length << ','
+                     << opts.block_size << ',' << data_seed << ',' << round << ','
+                     << position << ',' << candidate.name << ','
+                     << (candidate.layout == Layout::HeadMajor ? "head_major"
+                                                               : "block_major")
+                     << ','
+                     << (candidate.traversal == Traversal::HeadFirst ? "head_first"
+                                                                     : "block_first")
+                     << ',' << elapsed_ms << ',' << checksum(states[index]) << ','
+                     << errors[index].first << ',' << errors[index].second << ",true\n";
+              ++rows;
+            }
+          }
+        }
+      }
+    }
+  }
+  std::cout << "Wrote " << rows << " randomized trials to " << opts.out << '\n';
+}
+
+} // namespace
+
+int main(int argc, char** argv) {
+  try {
+    benchmark(options(argc, argv));
+    return 0;
+  } catch (const std::exception& error) {
+    std::cerr << "error: " << error.what() << '\n';
+    return 1;
+  }
+}
