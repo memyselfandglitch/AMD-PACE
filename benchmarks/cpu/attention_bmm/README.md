@@ -376,3 +376,24 @@ Custom shapes use
 specified with `PACE_DECODE_BLOCK_SIZES=16,32,64,128,256`; the crossover
 profile intentionally fixes block size at 64 until a shape/length boundary is
 identified.
+
+Run the preregistered targeted validation after the broad crossover sweep:
+
+```bash
+sbatch benchmarks/cpu/attention_bmm/slurm_decode_layout_targeted.sbatch
+```
+
+This job generates and runs two lanes without manual post-processing:
+
+- a 64-case matrix matching total logical K+V bytes per call across MHA KV-head
+  counts `2,4,8,16` and sequential batch sizes `1,4`; and
+- a six-case MHA-2, batch-4 transition lane spanning sequence lengths
+  `6144` through `16384`, retaining all four layout/traversal configurations.
+
+The harness records that batch is processed by a sequential outer loop, reports
+both per-sequence and per-call KV bytes and block counts, uses 64-byte-aligned
+storage, and balances candidate position with randomized four-round Latin-square
+cycles. The Slurm job performs three independent process launches and only calls
+a result repeatable when it passes the strict paired criterion in at least two
+launches. Outputs are written under
+`benchmark_results/decode-layout-targeted/<job_id>/`.

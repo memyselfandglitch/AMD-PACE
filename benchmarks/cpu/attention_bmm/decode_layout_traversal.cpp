@@ -13,6 +13,7 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
 #include <cstdint>
 #include <cstring>
 #include <fstream>
@@ -20,8 +21,10 @@
 #include <iostream>
 #include <limits>
 #include <random>
+#include <sstream>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -31,6 +34,54 @@ using Clock = std::chrono::steady_clock;
 using BFloat16 = uint16_t;
 
 constexpr int64_t kMaxBlockSize = 256;
+constexpr size_t kAlignmentBytes = 64;
+
+template <typename T, size_t Alignment>
+class AlignedAllocator {
+ public:
+  using value_type = T;
+
+  AlignedAllocator() noexcept = default;
+
+  template <typename U>
+  AlignedAllocator(const AlignedAllocator<U, Alignment>&) noexcept {}
+
+  T* allocate(size_t count) {
+    if (count > std::numeric_limits<size_t>::max() / sizeof(T))
+      throw std::bad_alloc();
+    void* pointer = nullptr;
+    if (posix_memalign(&pointer, Alignment, count * sizeof(T)) != 0)
+      throw std::bad_alloc();
+    return static_cast<T*>(pointer);
+  }
+
+  void deallocate(T* pointer, size_t) noexcept {
+    std::free(pointer);
+  }
+
+  template <typename U>
+  struct rebind {
+    using other = AlignedAllocator<U, Alignment>;
+  };
+};
+
+template <typename T, typename U, size_t Alignment>
+bool operator==(
+    const AlignedAllocator<T, Alignment>&,
+    const AlignedAllocator<U, Alignment>&) noexcept {
+  return true;
+}
+
+template <typename T, typename U, size_t Alignment>
+bool operator!=(
+    const AlignedAllocator<T, Alignment>&,
+    const AlignedAllocator<U, Alignment>&) noexcept {
+  return false;
+}
+
+using BFloat16Vector =
+    std::vector<BFloat16, AlignedAllocator<BFloat16, kAlignmentBytes>>;
+using FloatVector = std::vector<float, AlignedAllocator<float, kAlignmentBytes>>;
 
 enum class Layout { HeadMajor, BlockMajor };
 enum class Traversal { HeadFirst, BlockFirst };
@@ -56,6 +107,16 @@ struct Shape {
   int64_t head_dim;
 };
 
+struct Case {
+  std::string family;
+  std::string name;
+  Shape shape;
+  int64_t batch_size;
+  int64_t sequence_length;
+  int64_t block_size;
+  double target_kv_mib;
+};
+
 const std::array<Shape, 3> kShapes{{
     {"default", "slm_gqa", 8, 4, 64},
     {"default", "llama_gqa", 32, 8, 128},
@@ -72,6 +133,8 @@ struct Options {
   int warmups = 2;
   int repeats = 20;
   uint64_t order_seed = 20260816;
+  std::string cases;
+  std::string process_launch = "0";
   std::string out = "decode_layout_traversal_trials.csv";
 };
 
@@ -133,14 +196,19 @@ Options options(int argc, char** argv) {
       result.repeats = std::stoi(value);
     else if (name == "--order-seed")
       result.order_seed = std::stoull(value);
+    else if (name == "--cases")
+      result.cases = value;
+    else if (name == "--process-launch")
+      result.process_launch = value;
     else if (name == "--out")
       result.out = value;
     else
       throw std::invalid_argument("unknown option: " + name);
   }
-  if (result.shapes.empty() || result.sequence_lengths.empty() ||
-      result.batch_sizes.empty() || result.data_seeds.empty() ||
-      result.block_sizes.empty() || result.warmups < 0 || result.repeats <= 0)
+  if (result.data_seeds.empty() || result.warmups < 0 || result.repeats <= 0 ||
+      (result.cases.empty() &&
+       (result.shapes.empty() || result.sequence_lengths.empty() ||
+        result.batch_sizes.empty() || result.block_sizes.empty())))
     throw std::invalid_argument("invalid empty list, block size, or repeat count");
   for (const int64_t block_size : result.block_sizes) {
     if (block_size <= 0 || block_size > kMaxBlockSize || block_size % 16 != 0)
@@ -148,6 +216,68 @@ Options options(int argc, char** argv) {
           "block sizes must be multiples of 16 no larger than 256");
   }
   return result;
+}
+
+std::vector<Case> read_cases(const std::string& path) {
+  std::ifstream stream(path);
+  if (!stream)
+    throw std::runtime_error("could not open case manifest: " + path);
+
+  std::string line;
+  if (!std::getline(stream, line))
+    throw std::runtime_error("case manifest is empty: " + path);
+  if (!line.empty() && line.back() == '\r')
+    line.pop_back();
+  const auto header = split(line);
+  std::unordered_map<std::string, size_t> columns;
+  for (size_t index = 0; index < header.size(); ++index)
+    columns[header[index]] = index;
+  const std::array<const char*, 10> required{{
+      "case_family", "case_name", "shape", "num_q_heads", "num_kv_heads",
+      "head_dim", "batch_size", "seq_len", "block_size", "target_kv_mib"}};
+  for (const char* name : required) {
+    if (columns.count(name) == 0)
+      throw std::runtime_error("case manifest missing column: " + std::string(name));
+  }
+
+  std::vector<Case> cases;
+  while (std::getline(stream, line)) {
+    if (!line.empty() && line.back() == '\r')
+      line.pop_back();
+    if (line.empty())
+      continue;
+    const auto fields = split(line);
+    if (fields.size() != header.size())
+      throw std::runtime_error("case manifest rows must not contain quoted commas");
+    const auto field = [&](const char* name) -> const std::string& {
+      return fields[columns.at(name)];
+    };
+    Case item{
+        field("case_family"),
+        field("case_name"),
+        {field("case_family"),
+         field("shape"),
+         std::stoll(field("num_q_heads")),
+         std::stoll(field("num_kv_heads")),
+         std::stoll(field("head_dim"))},
+        std::stoll(field("batch_size")),
+        std::stoll(field("seq_len")),
+        std::stoll(field("block_size")),
+        std::stod(field("target_kv_mib"))};
+    if (item.family.empty() || item.name.empty() || item.shape.name.empty() ||
+        item.shape.num_q_heads <= 0 || item.shape.num_kv_heads <= 0 ||
+        item.shape.num_q_heads % item.shape.num_kv_heads != 0 ||
+        (item.shape.head_dim != 64 && item.shape.head_dim != 128 &&
+         item.shape.head_dim != 256) ||
+        item.batch_size <= 0 || item.sequence_length <= 0 ||
+        item.block_size <= 0 || item.block_size > kMaxBlockSize ||
+        item.block_size % 16 != 0)
+      throw std::runtime_error("invalid case manifest row: " + item.name);
+    cases.push_back(std::move(item));
+  }
+  if (cases.empty())
+    throw std::runtime_error("case manifest has no cases: " + path);
+  return cases;
 }
 
 const Shape& find_shape(const std::string& name) {
@@ -198,6 +328,37 @@ std::vector<Shape> selected_shapes(const Options& opts) {
       throw std::invalid_argument(
           "invalid shape spec; head_dim must be 64, 128, or 256");
     result.push_back({family, name, num_q_heads, num_kv_heads, head_dim});
+  }
+  return result;
+}
+
+std::vector<Case> selected_cases(const Options& opts) {
+  if (!opts.cases.empty())
+    return read_cases(opts.cases);
+
+  std::vector<Case> result;
+  for (const auto& shape : selected_shapes(opts)) {
+    for (const int64_t batch_size : opts.batch_sizes) {
+      for (const int64_t sequence_length : opts.sequence_lengths) {
+        for (const int64_t block_size : opts.block_sizes) {
+          std::ostringstream name;
+          name << shape.name << "_b" << batch_size << "_s" << sequence_length
+               << "_bs" << block_size;
+          const double target_kv_mib =
+              static_cast<double>(batch_size * sequence_length *
+                                  shape.num_kv_heads * shape.head_dim * 4) /
+              static_cast<double>(1ULL << 20);
+          result.push_back({
+              shape.family,
+              name.str(),
+              shape,
+              batch_size,
+              sequence_length,
+              block_size,
+              target_kv_mib});
+        }
+      }
+    }
   }
   return result;
 }
@@ -293,9 +454,9 @@ struct Workload {
   int64_t total_blocks;
   int64_t repetitions;
   float scale;
-  std::vector<BFloat16> queries;
-  std::vector<BFloat16> head_major_pool;
-  std::vector<BFloat16> block_major_pool;
+  BFloat16Vector queries;
+  BFloat16Vector head_major_pool;
+  BFloat16Vector block_major_pool;
 
   Workload(
       const Shape& shape,
@@ -368,9 +529,9 @@ struct Workload {
 };
 
 struct State {
-  std::vector<float> maximum;
-  std::vector<float> sum;
-  std::vector<float> output;
+  FloatVector maximum;
+  FloatVector sum;
+  FloatVector output;
 
   explicit State(const Workload& workload)
       : maximum(static_cast<size_t>(workload.batch_size * workload.shape.num_q_heads)),
@@ -512,7 +673,7 @@ double checksum(const State& state) {
 }
 
 std::pair<double, double> error(
-    const std::vector<float>& reference, const std::vector<float>& candidate) {
+    const FloatVector& reference, const FloatVector& candidate) {
   double maximum_absolute = 0.0;
   double maximum_relative = 0.0;
   for (size_t index = 0; index < reference.size(); ++index) {
@@ -527,9 +688,14 @@ std::pair<double, double> error(
 }
 
 void write_header(std::ofstream& stream) {
-  stream << "shape_family,shape,num_q_heads,num_kv_heads,head_dim,batch_size,seq_len,"
-            "block_size,data_seed,round,order_position,candidate,layout,"
-            "traversal,elapsed_ms,checksum,max_abs_error,max_rel_error,correct\n";
+  stream << "case_family,case_name,target_kv_mib,batch_semantics,"
+            "kv_bytes_per_sequence,kv_bytes_per_call,"
+            "allocated_kv_bytes_per_sequence,allocated_kv_bytes_per_call,"
+            "blocks_per_sequence,blocks_per_call,alignment_bytes,order_policy,"
+            "process_launch,"
+            "shape_family,shape,num_q_heads,num_kv_heads,head_dim,batch_size,seq_len,"
+            "block_size,data_seed,round,order_position,candidate,layout,traversal,"
+            "elapsed_ms,checksum,max_abs_error,max_rel_error,correct\n";
 }
 
 void benchmark(const Options& opts) {
@@ -541,75 +707,98 @@ void benchmark(const Options& opts) {
   std::mt19937_64 order_random(opts.order_seed);
   size_t rows = 0;
 
-  const std::vector<Shape> shapes = selected_shapes(opts);
-  for (const auto& shape : shapes) {
-    for (const int64_t batch_size : opts.batch_sizes) {
-      for (const int64_t sequence_length : opts.sequence_lengths) {
-        for (const int64_t block_size : opts.block_sizes) {
-          for (const uint64_t data_seed : opts.data_seeds) {
-            Workload workload(
-                shape, batch_size, sequence_length, block_size, data_seed);
-            std::array<State, 4> states{{
-                State(workload),
-                State(workload),
-                State(workload),
-                State(workload)}};
+  std::vector<Case> cases = selected_cases(opts);
+  std::shuffle(cases.begin(), cases.end(), order_random);
+  for (const auto& item : cases) {
+    const Shape& shape = item.shape;
+    const int64_t batch_size = item.batch_size;
+    const int64_t sequence_length = item.sequence_length;
+    const int64_t block_size = item.block_size;
+    for (const uint64_t data_seed : opts.data_seeds) {
+      Workload workload(
+          shape, batch_size, sequence_length, block_size, data_seed);
+      std::array<State, 4> states{{
+          State(workload),
+          State(workload),
+          State(workload),
+          State(workload)}};
 
-            run(workload, kCandidates[0], states[0]);
-            const auto reference = states[0].output;
-            std::array<std::pair<double, double>, 4> errors{};
-            for (size_t index = 0; index < kCandidates.size(); ++index) {
-              run(workload, kCandidates[index], states[index]);
-              errors[index] = error(reference, states[index].output);
-              if (errors[index].first > 1e-4 || errors[index].second > 1e-3)
-                throw std::runtime_error(
-                    std::string("correctness failed for ") +
-                    kCandidates[index].name);
-            }
+      run(workload, kCandidates[0], states[0]);
+      const auto reference = states[0].output;
+      std::array<std::pair<double, double>, 4> errors{};
+      for (size_t index = 0; index < kCandidates.size(); ++index) {
+        run(workload, kCandidates[index], states[index]);
+        errors[index] = error(reference, states[index].output);
+        if (errors[index].first > 1e-4 || errors[index].second > 1e-3)
+          throw std::runtime_error(
+              std::string("correctness failed for ") +
+              kCandidates[index].name);
+      }
 
-            for (int warmup = 0; warmup < opts.warmups; ++warmup) {
-              std::array<size_t, 4> order{{0, 1, 2, 3}};
-              std::shuffle(order.begin(), order.end(), order_random);
-              for (const size_t index : order)
-                run(workload, kCandidates[index], states[index]);
-            }
+      for (int warmup = 0; warmup < opts.warmups; ++warmup) {
+        std::array<size_t, 4> order{{0, 1, 2, 3}};
+        std::shuffle(order.begin(), order.end(), order_random);
+        for (const size_t index : order)
+          run(workload, kCandidates[index], states[index]);
+      }
 
-            for (int round = 0; round < opts.repeats; ++round) {
-              std::array<size_t, 4> order{{0, 1, 2, 3}};
-              std::shuffle(order.begin(), order.end(), order_random);
-              for (size_t position = 0; position < order.size(); ++position) {
-                const size_t index = order[position];
-                const auto start = Clock::now();
-                run(workload, kCandidates[index], states[index]);
-                const auto stop = Clock::now();
-                const double elapsed_ms =
-                    std::chrono::duration<double, std::milli>(stop - start)
-                        .count();
-                const Candidate& candidate = kCandidates[index];
-                stream << shape.family << ',' << shape.name << ','
-                       << shape.num_q_heads << ',' << shape.num_kv_heads << ','
-                       << shape.head_dim << ',' << batch_size << ','
-                       << sequence_length << ',' << block_size << ',' << data_seed
-                       << ',' << round << ',' << position << ',' << candidate.name
-                       << ','
-                       << (candidate.layout == Layout::HeadMajor ? "head_major"
-                                                                 : "block_major")
-                       << ','
-                       << (candidate.traversal == Traversal::HeadFirst
-                               ? "head_first"
-                               : "block_first")
-                       << ',' << elapsed_ms << ',' << checksum(states[index])
-                       << ',' << errors[index].first << ',' << errors[index].second
-                       << ",true\n";
-                ++rows;
-              }
-            }
-          }
+      std::array<size_t, 4> base_order{{0, 1, 2, 3}};
+      for (int round = 0; round < opts.repeats; ++round) {
+        if (round % static_cast<int>(kCandidates.size()) == 0)
+          std::shuffle(base_order.begin(), base_order.end(), order_random);
+        // Rotate each shuffled cycle so every candidate occupies every position.
+        std::array<size_t, 4> order{};
+        for (size_t position = 0; position < order.size(); ++position) {
+          order[position] = base_order[
+              (position + static_cast<size_t>(round)) % order.size()];
+        }
+        for (size_t position = 0; position < order.size(); ++position) {
+          const size_t index = order[position];
+          const auto start = Clock::now();
+          run(workload, kCandidates[index], states[index]);
+          const auto stop = Clock::now();
+          const double elapsed_ms =
+              std::chrono::duration<double, std::milli>(stop - start).count();
+          const Candidate& candidate = kCandidates[index];
+          const uint64_t kv_bytes_per_sequence =
+              static_cast<uint64_t>(sequence_length) *
+              static_cast<uint64_t>(shape.num_kv_heads) *
+              static_cast<uint64_t>(shape.head_dim) * 4ULL;
+          const uint64_t allocated_kv_bytes_per_sequence =
+              static_cast<uint64_t>(workload.blocks_per_sequence) *
+              static_cast<uint64_t>(block_size) *
+              static_cast<uint64_t>(shape.num_kv_heads) *
+              static_cast<uint64_t>(shape.head_dim) * 4ULL;
+          stream << item.family << ',' << item.name << ','
+                 << item.target_kv_mib << ",sequential_outer_loop,"
+                 << kv_bytes_per_sequence << ','
+                 << kv_bytes_per_sequence * static_cast<uint64_t>(batch_size)
+                 << ',' << allocated_kv_bytes_per_sequence << ','
+                 << allocated_kv_bytes_per_sequence *
+                        static_cast<uint64_t>(batch_size)
+                 << ',' << workload.blocks_per_sequence << ','
+                 << workload.total_blocks << ',' << kAlignmentBytes << ','
+                 << "latin_square_cycle4," << opts.process_launch << ','
+                 << shape.family << ',' << shape.name << ','
+                 << shape.num_q_heads << ',' << shape.num_kv_heads << ','
+                 << shape.head_dim << ',' << batch_size << ',' << sequence_length
+                 << ',' << block_size << ',' << data_seed << ',' << round << ','
+                 << position << ',' << candidate.name << ','
+                 << (candidate.layout == Layout::HeadMajor ? "head_major"
+                                                           : "block_major")
+                 << ','
+                 << (candidate.traversal == Traversal::HeadFirst ? "head_first"
+                                                                  : "block_first")
+                 << ',' << elapsed_ms << ',' << checksum(states[index]) << ','
+                 << errors[index].first << ',' << errors[index].second
+                 << ",true\n";
+          ++rows;
         }
       }
     }
   }
-  std::cout << "Wrote " << rows << " randomized trials to " << opts.out << '\n';
+  std::cout << "Wrote " << rows << " balanced randomized trials to " << opts.out
+            << '\n';
 }
 
 } // namespace
