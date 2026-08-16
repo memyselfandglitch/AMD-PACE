@@ -50,6 +50,10 @@ def percentile(values: list[float], fraction: float) -> float:
     return ordered[lower] * (1.0 - weight) + ordered[upper] * weight
 
 
+def truthy(value: object) -> bool:
+    return value is True or str(value).lower() == "true"
+
+
 def bootstrap_median_ci(
     values: list[float], samples: int, seed: int
 ) -> tuple[float, float]:
@@ -359,11 +363,11 @@ def write_report(
         for row in rows
     )
     repeatable_co_design_wins = sum(
-        bool(row["co_designed_vs_current_repeatable_candidate"])
+        truthy(row["co_designed_vs_current_repeatable_candidate"])
         for row in rows
     )
     repeatable_current_wins = sum(
-        bool(row["co_designed_vs_current_repeatable_baseline"])
+        truthy(row["co_designed_vs_current_repeatable_baseline"])
         for row in rows
     )
     recommendations = defaultdict(int)
@@ -472,7 +476,7 @@ def write_report(
                     float(row["co_designed_vs_current_speedup"]) for row in group
                 ]
                 wins = sum(
-                    bool(row["co_designed_vs_current_repeatable_candidate"])
+                    truthy(row["co_designed_vs_current_repeatable_candidate"])
                     for row in group
                 )
                 stream.write(
@@ -593,15 +597,18 @@ def write_report(
                 for shape in sorted({str(row["shape"]) for row in block_rows}):
                     cells = []
                     for sequence, batch in columns:
-                        row = by_cell[(shape, sequence, batch)]
-                        decision = row["co_designed_vs_current_decision"]
+                        cell = by_cell.get((shape, sequence, batch))
+                        if cell is None:
+                            cells.append("-")
+                            continue
+                        decision = cell["co_designed_vs_current_decision"]
                         marker = "~"
                         if decision == "block_major_block_first":
                             marker = "+"
                         elif decision == "head_major_head_first":
                             marker = "-"
                         cells.append(
-                            f"{float(row['co_designed_vs_current_speedup']):.3f}x {marker}"
+                            f"{float(cell['co_designed_vs_current_speedup']):.3f}x {marker}"
                         )
                     stream.write(f"| {shape} | " + " | ".join(cells) + " |\n")
                 stream.write("\n")
