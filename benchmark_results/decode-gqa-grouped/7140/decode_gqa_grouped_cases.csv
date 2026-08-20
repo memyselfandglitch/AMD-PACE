@@ -1,0 +1,3 @@
+case_family,case_name,shape,num_q_heads,num_kv_heads,head_dim,batch_size,seq_len,block_size,target_kv_mib
+gqa_grouped,b1_q32_kv32_r1_s512,gqa_r1_q32_kv32,32,32,64,1,512,64,4.0
+gqa_grouped,b1_q32_kv8_r4_s512,gqa_r4_q32_kv8,32,8,64,1,512,64,1.0
