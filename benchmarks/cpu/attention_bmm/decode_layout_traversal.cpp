@@ -85,18 +85,35 @@ using FloatVector = std::vector<float, AlignedAllocator<float, kAlignmentBytes>>
 
 enum class Layout { HeadMajor, BlockMajor };
 enum class Traversal { HeadFirst, BlockFirst };
+enum class QueryProcessing { PerQuery, Grouped };
 
 struct Candidate {
   const char* name;
   Layout layout;
   Traversal traversal;
+  QueryProcessing query_processing;
 };
 
 constexpr std::array<Candidate, 4> kCandidates{{
-    {"head_major_head_first", Layout::HeadMajor, Traversal::HeadFirst},
-    {"block_major_head_first", Layout::BlockMajor, Traversal::HeadFirst},
-    {"head_major_block_first", Layout::HeadMajor, Traversal::BlockFirst},
-    {"block_major_block_first", Layout::BlockMajor, Traversal::BlockFirst},
+    {"head_major_head_first", Layout::HeadMajor, Traversal::HeadFirst,
+     QueryProcessing::PerQuery},
+    {"block_major_head_first", Layout::BlockMajor, Traversal::HeadFirst,
+     QueryProcessing::PerQuery},
+    {"head_major_block_first", Layout::HeadMajor, Traversal::BlockFirst,
+     QueryProcessing::PerQuery},
+    {"block_major_block_first", Layout::BlockMajor, Traversal::BlockFirst,
+     QueryProcessing::PerQuery},
+}};
+
+constexpr std::array<Candidate, 4> kGqaCandidates{{
+    {"head_major_head_first", Layout::HeadMajor, Traversal::HeadFirst,
+     QueryProcessing::PerQuery},
+    {"block_major_block_first", Layout::BlockMajor, Traversal::BlockFirst,
+     QueryProcessing::PerQuery},
+    {"head_major_head_first_grouped", Layout::HeadMajor, Traversal::HeadFirst,
+     QueryProcessing::Grouped},
+    {"block_major_block_first_grouped", Layout::BlockMajor,
+     Traversal::BlockFirst, QueryProcessing::Grouped},
 }};
 
 struct Shape {
@@ -133,6 +150,7 @@ struct Options {
   int warmups = 2;
   int repeats = 20;
   uint64_t order_seed = 20260816;
+  std::string candidate_set = "layout";
   std::string cases;
   std::string process_launch = "0";
   std::string out = "decode_layout_traversal_trials.csv";
@@ -196,6 +214,8 @@ Options options(int argc, char** argv) {
       result.repeats = std::stoi(value);
     else if (name == "--order-seed")
       result.order_seed = std::stoull(value);
+    else if (name == "--candidate-set")
+      result.candidate_set = value;
     else if (name == "--cases")
       result.cases = value;
     else if (name == "--process-launch")
@@ -206,6 +226,8 @@ Options options(int argc, char** argv) {
       throw std::invalid_argument("unknown option: " + name);
   }
   if (result.data_seeds.empty() || result.warmups < 0 || result.repeats <= 0 ||
+      (result.candidate_set != "layout" &&
+       result.candidate_set != "gqa_grouped") ||
       (result.cases.empty() &&
        (result.shapes.empty() || result.sequence_lengths.empty() ||
         result.batch_sizes.empty() || result.block_sizes.empty())))
@@ -216,6 +238,10 @@ Options options(int argc, char** argv) {
           "block sizes must be multiples of 16 no larger than 256");
   }
   return result;
+}
+
+const std::array<Candidate, 4>& candidates(const Options& opts) {
+  return opts.candidate_set == "gqa_grouped" ? kGqaCandidates : kCandidates;
 }
 
 std::vector<Case> read_cases(const std::string& path) {
@@ -532,11 +558,24 @@ struct State {
   FloatVector maximum;
   FloatVector sum;
   FloatVector output;
+  FloatVector scratch_scores;
+  FloatVector scratch_weights;
+  FloatVector scratch_block_maximum;
+  FloatVector scratch_token_scores;
 
-  explicit State(const Workload& workload)
+  explicit State(const Workload& workload, bool allocate_grouped_scratch)
       : maximum(static_cast<size_t>(workload.batch_size * workload.shape.num_q_heads)),
         sum(maximum.size()),
-        output(maximum.size() * static_cast<size_t>(workload.shape.head_dim)) {}
+        output(maximum.size() * static_cast<size_t>(workload.shape.head_dim)),
+        scratch_scores(allocate_grouped_scratch
+                ? static_cast<size_t>(
+                      workload.repetitions * workload.block_size)
+                : 0),
+        scratch_weights(scratch_scores.size()),
+        scratch_block_maximum(allocate_grouped_scratch
+                ? static_cast<size_t>(workload.repetitions)
+                : 0),
+        scratch_token_scores(scratch_block_maximum.size()) {}
 
   void reset() {
     std::fill(maximum.begin(), maximum.end(), -std::numeric_limits<float>::infinity());
@@ -637,19 +676,200 @@ void process_group_block(
         state);
 }
 
+void grouped_dot_products(
+    const BFloat16* queries,
+    const BFloat16* key,
+    int64_t query_count,
+    int64_t head_dim,
+    float* results) {
+  constexpr int64_t kQueryTile = 4;
+  if (head_dim % 32 != 0)
+    throw std::invalid_argument("grouped query head dimension must divide 32");
+  for (int64_t query_base = 0; query_base < query_count;
+       query_base += kQueryTile) {
+    const int64_t count = std::min(kQueryTile, query_count - query_base);
+    __m512 accumulators[kQueryTile];
+    for (int64_t query = 0; query < count; ++query)
+      accumulators[query] = _mm512_setzero_ps();
+    for (int64_t dim = 0; dim < head_dim; dim += 32) {
+      const __m512bh key_vector = (__m512bh)_mm512_loadu_si512(
+          reinterpret_cast<const void*>(key + dim));
+      for (int64_t query = 0; query < count; ++query) {
+        const BFloat16* query_data =
+            queries + (query_base + query) * head_dim + dim;
+        const __m512bh query_vector = (__m512bh)_mm512_loadu_si512(
+            reinterpret_cast<const void*>(query_data));
+        accumulators[query] = _mm512_dpbf16_ps(
+            accumulators[query], query_vector, key_vector);
+      }
+    }
+    for (int64_t query = 0; query < count; ++query)
+      results[query_base + query] =
+          _mm512_reduce_add_ps(accumulators[query]);
+  }
+}
+
+template <int Chunks, int QueryTile>
+void accumulate_weighted_grouped(
+    float* outputs,
+    const BFloat16* values,
+    const float* weights,
+    int64_t query_count,
+    int64_t tokens,
+    int64_t head_dim,
+    int64_t weight_stride) {
+  for (int64_t query_base = 0; query_base < query_count;
+       query_base += QueryTile) {
+    const int64_t count = std::min<int64_t>(
+        QueryTile, query_count - query_base);
+    __m512 accumulators[QueryTile][Chunks];
+    for (int64_t query = 0; query < count; ++query) {
+      float* output = outputs + (query_base + query) * head_dim;
+      for (int chunk = 0; chunk < Chunks; ++chunk)
+        accumulators[query][chunk] =
+            _mm512_loadu_ps(output + chunk * 16);
+    }
+    for (int64_t token = 0; token < tokens; ++token) {
+      __m512 query_weights[QueryTile];
+      for (int64_t query = 0; query < count; ++query) {
+        query_weights[query] = _mm512_set1_ps(
+            weights[(query_base + query) * weight_stride + token]);
+      }
+      const BFloat16* row = values + token * head_dim;
+      for (int chunk = 0; chunk < Chunks; ++chunk) {
+        const __m512 value = bf16_to_fp32(_mm256_loadu_si256(
+            reinterpret_cast<const __m256i*>(row + chunk * 16)));
+        for (int64_t query = 0; query < count; ++query) {
+          accumulators[query][chunk] = _mm512_fmadd_ps(
+              query_weights[query], value, accumulators[query][chunk]);
+        }
+      }
+    }
+    for (int64_t query = 0; query < count; ++query) {
+      float* output = outputs + (query_base + query) * head_dim;
+      for (int chunk = 0; chunk < Chunks; ++chunk)
+        _mm512_storeu_ps(
+            output + chunk * 16, accumulators[query][chunk]);
+    }
+  }
+}
+
+void process_group_block_grouped(
+    const Workload& workload,
+    Layout layout,
+    int64_t batch,
+    int64_t logical_block,
+    int64_t kv_head,
+    State& state) {
+  const int64_t physical_block =
+      batch * workload.blocks_per_sequence + logical_block;
+  const int64_t tokens =
+      logical_block + 1 == workload.blocks_per_sequence
+      ? workload.sequence_length - logical_block * workload.block_size
+      : workload.block_size;
+  const BFloat16* keys = workload.block(layout, physical_block, kv_head, 0);
+  const BFloat16* values = workload.block(layout, physical_block, kv_head, 1);
+  const int64_t first_q_head = kv_head * workload.repetitions;
+  const BFloat16* queries = workload.query(batch, first_q_head);
+  float* scores = state.scratch_scores.data();
+  float* weights = state.scratch_weights.data();
+  float* block_maximum = state.scratch_block_maximum.data();
+  float* token_scores = state.scratch_token_scores.data();
+  std::fill(
+      block_maximum,
+      block_maximum + workload.repetitions,
+      -std::numeric_limits<float>::infinity());
+
+  // Reuse each key row while computing every query that shares this KV head.
+  for (int64_t token = 0; token < tokens; ++token) {
+    grouped_dot_products(
+        queries,
+        keys + token * workload.shape.head_dim,
+        workload.repetitions,
+        workload.shape.head_dim,
+        token_scores);
+    for (int64_t rep = 0; rep < workload.repetitions; ++rep) {
+      const float score = token_scores[rep] * workload.scale;
+      scores[rep * workload.block_size + token] = score;
+      block_maximum[rep] = std::max(block_maximum[rep], score);
+    }
+  }
+
+  for (int64_t rep = 0; rep < workload.repetitions; ++rep) {
+    const size_t state_index = static_cast<size_t>(
+        batch * workload.shape.num_q_heads + first_q_head + rep);
+    float& running_max = state.maximum[state_index];
+    float& running_sum = state.sum[state_index];
+    float* output =
+        state.output.data() + state_index * workload.shape.head_dim;
+    const float new_max = std::max(running_max, block_maximum[rep]);
+    if (new_max > running_max) {
+      float correction;
+      EXP_APPROX_SCALAR(running_max - new_max, correction);
+      running_sum *= correction;
+      const __m512 factor = _mm512_set1_ps(correction);
+      for (int64_t dim = 0; dim < workload.shape.head_dim; dim += 16) {
+        const __m512 value = _mm512_loadu_ps(output + dim);
+        _mm512_storeu_ps(output + dim, _mm512_mul_ps(value, factor));
+      }
+    }
+
+    float* query_scores = scores + rep * workload.block_size;
+    float* query_weights = weights + rep * workload.block_size;
+    int64_t token = 0;
+    __m512 vector_sum = _mm512_setzero_ps();
+    const __m512 negative_max = _mm512_set1_ps(-new_max);
+    {
+      EXP_APPROX_AVX512_CONSTANTS();
+      for (; token + 16 <= tokens; token += 16) {
+        const __m512 score = _mm512_loadu_ps(query_scores + token);
+        __m512 weight;
+        EXP_APPROX_AVX512(_mm512_add_ps(score, negative_max), weight);
+        _mm512_storeu_ps(query_weights + token, weight);
+        vector_sum = _mm512_add_ps(vector_sum, weight);
+      }
+    }
+    float local_sum = _mm512_reduce_add_ps(vector_sum);
+    for (; token < tokens; ++token) {
+      EXP_APPROX_SCALAR(query_scores[token] - new_max, query_weights[token]);
+      local_sum += query_weights[token];
+    }
+    running_sum += local_sum;
+    running_max = new_max;
+  }
+
+  float* outputs = state.output.data() +
+      static_cast<size_t>(batch * workload.shape.num_q_heads + first_q_head) *
+          workload.shape.head_dim;
+  if (workload.shape.head_dim == 64) {
+    accumulate_weighted_grouped<4, 4>(
+        outputs, values, weights, workload.repetitions, tokens,
+        workload.shape.head_dim, workload.block_size);
+  } else if (workload.shape.head_dim == 128) {
+    accumulate_weighted_grouped<8, 2>(
+        outputs, values, weights, workload.repetitions, tokens,
+        workload.shape.head_dim, workload.block_size);
+  } else {
+    accumulate_weighted_grouped<16, 1>(
+        outputs, values, weights, workload.repetitions, tokens,
+        workload.shape.head_dim, workload.block_size);
+  }
+}
+
 void run(const Workload& workload, const Candidate& candidate, State& state) {
   state.reset();
+  const auto process = candidate.query_processing == QueryProcessing::Grouped
+      ? process_group_block_grouped
+      : process_group_block;
   for (int64_t batch = 0; batch < workload.batch_size; ++batch) {
     if (candidate.traversal == Traversal::HeadFirst) {
       for (int64_t kv_head = 0; kv_head < workload.shape.num_kv_heads; ++kv_head)
         for (int64_t block = 0; block < workload.blocks_per_sequence; ++block)
-          process_group_block(
-              workload, candidate.layout, batch, block, kv_head, state);
+          process(workload, candidate.layout, batch, block, kv_head, state);
     } else {
       for (int64_t block = 0; block < workload.blocks_per_sequence; ++block)
         for (int64_t kv_head = 0; kv_head < workload.shape.num_kv_heads; ++kv_head)
-          process_group_block(
-              workload, candidate.layout, batch, block, kv_head, state);
+          process(workload, candidate.layout, batch, block, kv_head, state);
     }
   }
   for (size_t index = 0; index < state.maximum.size(); ++index) {
@@ -695,7 +915,7 @@ void write_header(std::ofstream& stream) {
             "process_launch,"
             "shape_family,shape,num_q_heads,num_kv_heads,head_dim,batch_size,seq_len,"
             "block_size,data_seed,round,order_position,candidate,layout,traversal,"
-            "elapsed_ms,checksum,max_abs_error,max_rel_error,correct\n";
+            "query_processing,elapsed_ms,checksum,max_abs_error,max_rel_error,correct\n";
 }
 
 void benchmark(const Options& opts) {
@@ -706,6 +926,7 @@ void benchmark(const Options& opts) {
   stream << std::setprecision(12);
   std::mt19937_64 order_random(opts.order_seed);
   size_t rows = 0;
+  const auto& benchmark_candidates = candidates(opts);
 
   std::vector<Case> cases = selected_cases(opts);
   std::shuffle(cases.begin(), cases.end(), order_random);
@@ -717,34 +938,35 @@ void benchmark(const Options& opts) {
     for (const uint64_t data_seed : opts.data_seeds) {
       Workload workload(
           shape, batch_size, sequence_length, block_size, data_seed);
+      const bool grouped_scratch = opts.candidate_set == "gqa_grouped";
       std::array<State, 4> states{{
-          State(workload),
-          State(workload),
-          State(workload),
-          State(workload)}};
+          State(workload, grouped_scratch),
+          State(workload, grouped_scratch),
+          State(workload, grouped_scratch),
+          State(workload, grouped_scratch)}};
 
-      run(workload, kCandidates[0], states[0]);
+      run(workload, benchmark_candidates[0], states[0]);
       const auto reference = states[0].output;
       std::array<std::pair<double, double>, 4> errors{};
-      for (size_t index = 0; index < kCandidates.size(); ++index) {
-        run(workload, kCandidates[index], states[index]);
+      for (size_t index = 0; index < benchmark_candidates.size(); ++index) {
+        run(workload, benchmark_candidates[index], states[index]);
         errors[index] = error(reference, states[index].output);
         if (errors[index].first > 1e-4 || errors[index].second > 1e-3)
           throw std::runtime_error(
               std::string("correctness failed for ") +
-              kCandidates[index].name);
+              benchmark_candidates[index].name);
       }
 
       for (int warmup = 0; warmup < opts.warmups; ++warmup) {
         std::array<size_t, 4> order{{0, 1, 2, 3}};
         std::shuffle(order.begin(), order.end(), order_random);
         for (const size_t index : order)
-          run(workload, kCandidates[index], states[index]);
+          run(workload, benchmark_candidates[index], states[index]);
       }
 
       std::array<size_t, 4> base_order{{0, 1, 2, 3}};
       for (int round = 0; round < opts.repeats; ++round) {
-        if (round % static_cast<int>(kCandidates.size()) == 0)
+        if (round % static_cast<int>(benchmark_candidates.size()) == 0)
           std::shuffle(base_order.begin(), base_order.end(), order_random);
         // Rotate each shuffled cycle so every candidate occupies every position.
         std::array<size_t, 4> order{};
@@ -755,11 +977,11 @@ void benchmark(const Options& opts) {
         for (size_t position = 0; position < order.size(); ++position) {
           const size_t index = order[position];
           const auto start = Clock::now();
-          run(workload, kCandidates[index], states[index]);
+          run(workload, benchmark_candidates[index], states[index]);
           const auto stop = Clock::now();
           const double elapsed_ms =
               std::chrono::duration<double, std::milli>(stop - start).count();
-          const Candidate& candidate = kCandidates[index];
+          const Candidate& candidate = benchmark_candidates[index];
           const uint64_t kv_bytes_per_sequence =
               static_cast<uint64_t>(sequence_length) *
               static_cast<uint64_t>(shape.num_kv_heads) *
@@ -789,6 +1011,10 @@ void benchmark(const Options& opts) {
                  << ','
                  << (candidate.traversal == Traversal::HeadFirst ? "head_first"
                                                                   : "block_first")
+                 << ','
+                 << (candidate.query_processing == QueryProcessing::Grouped
+                         ? "grouped"
+                         : "per_query")
                  << ',' << elapsed_ms << ',' << checksum(states[index]) << ','
                  << errors[index].first << ',' << errors[index].second
                  << ",true\n";

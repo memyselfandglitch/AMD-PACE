@@ -397,3 +397,59 @@ cycles. The Slurm job performs three independent process launches and only calls
 a result repeatable when it passes the strict paired criterion in at least two
 launches. Outputs are written under
 `benchmark_results/decode-layout-targeted/<job_id>/`.
+
+Inspect a targeted summary directly from the terminal:
+
+```bash
+python3 benchmarks/cpu/attention_bmm/inspect_decode_layout_results.py \
+  benchmark_results/decode-layout-targeted/7130/decode_layout_target_summary.csv \
+  --family kv_byte_target
+```
+
+Drill down to individual workloads or the three independent process launches:
+
+```bash
+python3 benchmarks/cpu/attention_bmm/inspect_decode_layout_results.py \
+  benchmark_results/decode-layout-targeted/7130/decode_layout_target_summary.csv \
+  --family kv_byte_target --payload 56 --batch 4 --view workloads
+
+python3 benchmarks/cpu/attention_bmm/inspect_decode_layout_results.py \
+  benchmark_results/decode-layout-targeted/7130/decode_layout_target_summary.csv \
+  --family kv_byte_target --payload 56 --batch 4 --view launches
+```
+
+Filters include `--payload`, `--batch`, `--kv-heads`, and
+`--decision win|tie|baseline`. Add `--csv` to emit the filtered view as CSV.
+
+### Grouped-Query GQA Decode
+
+The grouped-query experiment asks whether one K/V block can be consumed more
+efficiently by jointly processing all query heads mapped to its KV head. It
+compares the existing HM/HF and BM/BF paths with grouped versions of each, while
+holding the attention result and randomized paired protocol constant.
+
+Run a small server smoke test first:
+
+```bash
+PACE_GQA_SEQ_LENS=512 \
+PACE_GQA_KV_HEADS=32,8 \
+PACE_GQA_BATCH_SIZES=1 \
+PACE_DECODE_WARMUPS=2 \
+PACE_DECODE_REPEATS=4 \
+sbatch benchmarks/cpu/attention_bmm/slurm_decode_gqa_grouped.sbatch
+```
+
+After the smoke job builds successfully and all candidates pass correctness,
+run the full three-launch sweep:
+
+```bash
+sbatch benchmarks/cpu/attention_bmm/slurm_decode_gqa_grouped.sbatch
+```
+
+The default matrix holds query heads at `32`, varies KV heads
+`32,16,8,4,2,1` (GQA ratios `1,2,4,8,16,32`), uses batch sizes `1,2,4`, and
+sequence lengths `512,2048,8192,32768,65536`. Holding sequence geometry fixed
+while changing KV-head count isolates query sharing; the resulting logical K+V
+payload spans `0.125 MiB` through `2048 MiB`, rather than assuming the earlier
+40-72 MiB region. Results and the generated report are written under
+`benchmark_results/decode-gqa-grouped/<job_id>/`.
